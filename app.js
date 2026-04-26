@@ -4,6 +4,12 @@ const state = {
   selectedInfo: null,
 };
 
+const STREAMBIM_SCRIPT_CANDIDATES = [
+  "https://cdn.jsdelivr.net/npm/streambim-widget-api@2.0.1/dist/streambim-widget-api.min.js",
+  "https://unpkg.com/streambim-widget-api@2.0.1/dist/streambim-widget-api.min.js",
+  "https://cdn.jsdelivr.net/gh/streambim/streambim-widget-api@master/dist/streambim-widget-api.min.js",
+];
+
 const elements = {
   connectionBadge: document.getElementById("connection-badge"),
   selectionBadge: document.getElementById("selection-badge"),
@@ -44,6 +50,44 @@ function appendLog(title, payload) {
   entry.appendChild(heading);
   entry.appendChild(body);
   elements.debugLog.prepend(entry);
+}
+
+function loadExternalScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve(src);
+    script.onerror = () => reject(new Error(`Kunde inte ladda script: ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureStreamBimLibrary() {
+  if (window.StreamBIM) {
+    appendLog("Bibliotek", "StreamBIM fanns redan pa window.");
+    return;
+  }
+
+  let lastError = null;
+
+  for (const src of STREAMBIM_SCRIPT_CANDIDATES) {
+    try {
+      appendLog("Laddar bibliotek", src);
+      await loadExternalScript(src);
+      if (window.StreamBIM) {
+        appendLog("Bibliotek laddat", src);
+        return;
+      }
+      lastError = new Error(`Scriptet laddades men window.StreamBIM saknas: ${src}`);
+      appendLog("Bibliotek saknas efter load", src);
+    } catch (error) {
+      lastError = error;
+      appendLog("Scriptfel", error.message || String(error));
+    }
+  }
+
+  throw lastError || new Error("StreamBIM-biblioteket kunde inte laddas.");
 }
 
 function getApiMethod(methodName) {
@@ -270,13 +314,9 @@ async function handlePickedObject(result) {
 }
 
 async function connectWidget() {
-  if (!window.StreamBIM) {
-    setConnectionState(false, "StreamBIM API saknas");
-    showError("Biblioteket streambim-widget-api kunde inte laddas.");
-    return;
-  }
-
   try {
+    await ensureStreamBimLibrary();
+
     const callbacks = {
       pickedObject: handlePickedObject,
       spacesChanged: (guids) => appendLog("spacesChanged callback", guids),
