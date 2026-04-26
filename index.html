@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StreamBIM Objektwidget</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/gh/streambim/streambim-widget-api@master/dist/streambim-widget-api.min.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero-card">
+        <p class="eyebrow">StreamBIM widget</p>
+        <h1>Objektegenskaper direkt fran modellen</h1>
+        <p class="intro">
+          Klicka pa ett objekt i StreamBIM sa laddar widgeten GUID, metadata och egenskaper fran det valda objektet.
+        </p>
+        <div class="status-row">
+          <span id="connection-badge" class="badge badge-waiting">Vantar pa anslutning</span>
+          <span id="selection-badge" class="badge badge-idle">Inget objekt valt</span>
+        </div>
+      </section>
+
+      <section class="panel-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Anslutning</h2>
+            <button id="refresh-context" class="ghost-button" type="button">Ladda om projektinfo</button>
+          </div>
+          <dl class="meta-list">
+            <div>
+              <dt>Projekt</dt>
+              <dd id="project-id">-</dd>
+            </div>
+            <div>
+              <dt>Byggnad</dt>
+              <dd id="building-id">-</dd>
+            </div>
+            <div>
+              <dt>Anvandare</dt>
+              <dd id="user-email">-</dd>
+            </div>
+            <div>
+              <dt>Senast vald GUID</dt>
+              <dd id="selected-guid">-</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Snabbsatgarder</h2>
+          </div>
+          <div class="button-row">
+            <button id="goto-object" type="button" disabled>Ga till objekt</button>
+            <button id="highlight-object" type="button" disabled>Markera objekt</button>
+            <button id="copy-guid" type="button" disabled>Kopiera GUID</button>
+          </div>
+          <p id="action-feedback" class="helper-text">
+            Nar ett objekt valjs kan du fokusera kameran, markera objektet eller kopiera dess GUID.
+          </p>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Valt objekt</h2>
+        </div>
+        <div id="empty-state" class="empty-state">
+          <p>Ingen IFC-data annu.</p>
+          <p class="helper-text">Klicka pa ett objekt inne i StreamBIM for att fylla widgeten med egenskaper.</p>
+        </div>
+        <div id="object-summary" class="object-summary hidden"></div>
+        <div id="properties-root" class="properties-root hidden"></div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
