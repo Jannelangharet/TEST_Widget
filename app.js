@@ -19,7 +19,32 @@ const elements = {
   gotoObject: document.getElementById("goto-object"),
   highlightObject: document.getElementById("highlight-object"),
   copyGuid: document.getElementById("copy-guid"),
+  clearLog: document.getElementById("clear-log"),
+  debugLog: document.getElementById("debug-log"),
 };
+
+function appendLog(title, payload) {
+  const entry = document.createElement("article");
+  entry.className = "debug-entry";
+
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+
+  const body = document.createElement("pre");
+  if (typeof payload === "string") {
+    body.textContent = payload;
+  } else {
+    try {
+      body.textContent = JSON.stringify(payload, null, 2);
+    } catch (error) {
+      body.textContent = String(payload);
+    }
+  }
+
+  entry.appendChild(heading);
+  entry.appendChild(body);
+  elements.debugLog.prepend(entry);
+}
 
 function setConnectionState(connected, message) {
   state.connected = connected;
@@ -156,6 +181,26 @@ function renderObjectInfo(info) {
 
 function showError(message) {
   elements.actionFeedback.textContent = message;
+  appendLog("Fel", message);
+}
+
+function extractGuid(result) {
+  if (!result) {
+    return "";
+  }
+
+  if (typeof result === "string") {
+    return result;
+  }
+
+  return (
+    result.guid ||
+    result.objectGuid ||
+    result.id ||
+    result.object?.guid ||
+    result.data?.guid ||
+    ""
+  );
 }
 
 async function loadProjectContext() {
@@ -179,21 +224,26 @@ async function loadProjectContext() {
 }
 
 async function handlePickedObject(result) {
-  if (!result || !result.guid) {
+  appendLog("pickedObject callback", result);
+
+  const guid = extractGuid(result);
+  if (!guid) {
+    showError("pickedObject anropades men ingen GUID hittades i payloaden.");
     return;
   }
 
-  state.selectedGuid = result.guid;
-  setSelectionState(`Valt objekt: ${result.guid}`, true);
+  state.selectedGuid = guid;
+  setSelectionState(`Valt objekt: ${guid}`, true);
   elements.actionFeedback.textContent = "Laddar objektinformation...";
 
   try {
-    const info = await StreamBIM.API.getObjectInfo(result.guid);
-    renderObjectInfo(info || { guid: result.guid });
+    const info = await StreamBIM.API.getObjectInfo(guid);
+    appendLog("getObjectInfo svar", info || { guid });
+    renderObjectInfo(info || { guid });
     elements.actionFeedback.textContent = "Objektets data hamtades fran StreamBIM.";
   } catch (error) {
-    renderObjectInfo({ guid: result.guid, description: "Objektet valdes men egenskaper kunde inte hamtas." });
-    showError(`Kunde inte lasa objektinfo for ${result.guid}: ${error.message || error}`);
+    renderObjectInfo({ guid, description: "Objektet valdes men egenskaper kunde inte hamtas." });
+    showError(`Kunde inte lasa objektinfo for ${guid}: ${error.message || error}`);
   }
 }
 
@@ -205,13 +255,34 @@ async function connectWidget() {
   }
 
   try {
-    await StreamBIM.connectToParent(window, {
+    const callbacks = {
       pickedObject: handlePickedObject,
+      spacesChanged: (guids) => appendLog("spacesChanged callback", guids),
+      floorChanged: (floorId) => appendLog("floorChanged callback", floorId),
+      cameraChanged: (cameraState) => appendLog("cameraChanged callback", cameraState),
+      beforeInit: () => appendLog("beforeInit callback", "Viewer initierar"),
+    };
+
+    appendLog("Anslutning startar", {
+      hasConnectToParent: typeof StreamBIM.connectToParent === "function",
+      hasLegacyConnect: typeof StreamBIM.connect === "function",
+      hasApi: Boolean(StreamBIM.API),
     });
+
+    if (typeof StreamBIM.connectToParent === "function") {
+      await StreamBIM.connectToParent(window, callbacks);
+      appendLog("Anslutning", "Anvande StreamBIM.connectToParent(window, callbacks)");
+    } else if (typeof StreamBIM.connect === "function") {
+      await StreamBIM.connect(callbacks);
+      appendLog("Anslutning", "Anvande legacy StreamBIM.connect(callbacks)");
+    } else {
+      throw new Error("Ingen connect-metod hittades pa StreamBIM-objektet.");
+    }
 
     setConnectionState(true, "Ansluten till StreamBIM");
     setSelectionState("Klicka pa ett objekt i modellen", false);
     elements.actionFeedback.textContent = "Widgeten ar ansluten och lyssnar nu pa objektklick.";
+    appendLog("Anslutning klar", "Widgeten ar nu kopplad till parent.");
     await loadProjectContext();
   } catch (error) {
     setConnectionState(false, "Anslutning misslyckades");
@@ -219,8 +290,16 @@ async function connectWidget() {
   }
 }
 
+window.addEventListener("message", (event) => {
+  appendLog("window.message", {
+    origin: event.origin,
+    data: event.data,
+  });
+});
+
 elements.refreshContext.addEventListener("click", async () => {
   elements.actionFeedback.textContent = "Laddar om projektinformation...";
+  appendLog("Manuell handling", "Laddar om projektinformation");
   await loadProjectContext();
 });
 
@@ -231,6 +310,7 @@ elements.gotoObject.addEventListener("click", async () => {
 
   try {
     await StreamBIM.API.gotoObject(state.selectedGuid);
+    appendLog("gotoObject", state.selectedGuid);
     elements.actionFeedback.textContent = `Kameran flyttades till ${state.selectedGuid}.`;
   } catch (error) {
     showError(`Kunde inte navigera till objektet: ${error.message || error}`);
@@ -244,6 +324,7 @@ elements.highlightObject.addEventListener("click", async () => {
 
   try {
     await StreamBIM.API.highlightObject(state.selectedGuid);
+    appendLog("highlightObject", state.selectedGuid);
     elements.actionFeedback.textContent = `Objektet ${state.selectedGuid} markerades i modellen.`;
   } catch (error) {
     showError(`Kunde inte markera objektet: ${error.message || error}`);
@@ -257,10 +338,15 @@ elements.copyGuid.addEventListener("click", async () => {
 
   try {
     await navigator.clipboard.writeText(state.selectedGuid);
+    appendLog("clipboard.writeText", state.selectedGuid);
     elements.actionFeedback.textContent = `GUID kopierades: ${state.selectedGuid}.`;
   } catch (error) {
     showError(`Kunde inte kopiera GUID: ${error.message || error}`);
   }
+});
+
+elements.clearLog.addEventListener("click", () => {
+  elements.debugLog.innerHTML = "";
 });
 
 connectWidget();

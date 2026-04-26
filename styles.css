@@ -238,6 +238,33 @@ button:disabled {
   gap: 12px;
 }
 
+.debug-log {
+  display: grid;
+  gap: 10px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.debug-entry {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.debug-entry strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.debug-entry pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font: 0.84rem/1.45 Consolas, Monaco, monospace;
+}
+
 .property-group {
   padding: 18px;
   border: 1px solid var(--line);
