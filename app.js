@@ -46,6 +46,28 @@ function appendLog(title, payload) {
   elements.debugLog.prepend(entry);
 }
 
+function getApiMethod(methodName) {
+  if (window.StreamBIM?.API && typeof window.StreamBIM.API[methodName] === "function") {
+    return window.StreamBIM.API[methodName].bind(window.StreamBIM.API);
+  }
+
+  if (window.StreamBIM && typeof window.StreamBIM[methodName] === "function") {
+    return window.StreamBIM[methodName].bind(window.StreamBIM);
+  }
+
+  return null;
+}
+
+async function callApi(methodName, ...args) {
+  const method = getApiMethod(methodName);
+  if (!method) {
+    throw new Error(`API-metoden ${methodName} finns inte i denna StreamBIM-miljo.`);
+  }
+
+  appendLog(`API: ${methodName}`, { args });
+  return method(...args);
+}
+
 function setConnectionState(connected, message) {
   state.connected = connected;
   elements.connectionBadge.textContent = message;
@@ -210,9 +232,9 @@ async function loadProjectContext() {
 
   try {
     const [projectId, buildingId, userEmail] = await Promise.all([
-      StreamBIM.API.getProjectId(),
-      StreamBIM.API.getBuildingId(),
-      StreamBIM.API.getUserEmail(),
+      callApi("getProjectId"),
+      callApi("getBuildingId"),
+      callApi("getUserEmail"),
     ]);
 
     elements.projectId.textContent = formatValue(projectId);
@@ -237,7 +259,7 @@ async function handlePickedObject(result) {
   elements.actionFeedback.textContent = "Laddar objektinformation...";
 
   try {
-    const info = await StreamBIM.API.getObjectInfo(guid);
+    const info = await callApi("getObjectInfo", guid);
     appendLog("getObjectInfo svar", info || { guid });
     renderObjectInfo(info || { guid });
     elements.actionFeedback.textContent = "Objektets data hamtades fran StreamBIM.";
@@ -267,6 +289,13 @@ async function connectWidget() {
       hasConnectToParent: typeof StreamBIM.connectToParent === "function",
       hasLegacyConnect: typeof StreamBIM.connect === "function",
       hasApi: Boolean(StreamBIM.API),
+      topLevelMethods: [
+        "getProjectId",
+        "getUserEmail",
+        "getObjectInfo",
+        "gotoObject",
+        "highlightObject",
+      ].filter((name) => typeof StreamBIM[name] === "function"),
     });
 
     if (typeof StreamBIM.connectToParent === "function") {
@@ -309,7 +338,7 @@ elements.gotoObject.addEventListener("click", async () => {
   }
 
   try {
-    await StreamBIM.API.gotoObject(state.selectedGuid);
+    await callApi("gotoObject", state.selectedGuid);
     appendLog("gotoObject", state.selectedGuid);
     elements.actionFeedback.textContent = `Kameran flyttades till ${state.selectedGuid}.`;
   } catch (error) {
@@ -323,7 +352,7 @@ elements.highlightObject.addEventListener("click", async () => {
   }
 
   try {
-    await StreamBIM.API.highlightObject(state.selectedGuid);
+    await callApi("highlightObject", state.selectedGuid);
     appendLog("highlightObject", state.selectedGuid);
     elements.actionFeedback.textContent = `Objektet ${state.selectedGuid} markerades i modellen.`;
   } catch (error) {
