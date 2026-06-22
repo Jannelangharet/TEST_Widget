@@ -81,6 +81,19 @@
 
       <section class="panel">
         <div class="panel-heading">
+          <h2>Checklistor</h2>
+          <button id="load-checklists" class="ghost-button" type="button" disabled>Hamta checklistor</button>
+        </div>
+        <div id="checklist-empty" class="empty-state">
+          <p>Inga checklistor laddade an.</p>
+          <p class="helper-text">Valj ett objekt och klicka sedan pa knappen for att hamta checklistposter och kommentarer via StreamBIMs projekt-API.</p>
+        </div>
+        <div id="checklist-status" class="helper-text"></div>
+        <div id="checklist-root" class="checklist-root hidden"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
           <h2>Debug</h2>
           <button id="clear-log" class="ghost-button" type="button">Rensa logg</button>
         </div>

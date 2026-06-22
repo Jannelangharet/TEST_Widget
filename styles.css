@@ -238,6 +238,78 @@ button:disabled {
   gap: 12px;
 }
 
+.checklist-root {
+  display: grid;
+  gap: 14px;
+}
+
+.checklist-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-strong);
+}
+
+.checklist-card h3 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.checklist-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.checklist-copy {
+  margin: 0;
+  color: var(--muted);
+}
+
+.comment-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.comment-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.comment-card strong,
+.comment-card span {
+  display: block;
+}
+
+.comment-card strong {
+  margin-bottom: 4px;
+}
+
+.comment-card span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.comment-card p {
+  margin: 8px 0 0;
+}
+
 .debug-log {
   display: grid;
   gap: 10px;
