@@ -732,37 +732,46 @@ function buildSignatureEntry(topic, comments) {
 }
 
 async function loadChecklistCatalog() {
-  const payload = await fetchChecklistExport({
-    key: "checklist",
-    page: { skip: 0, limit: 500 },
-    sort: { field: "title", descending: false },
-    filters: [{ key: "isDraft", value: false }],
-  });
+  const payload = await fetchJsonViaViewer(
+    "/checklists?page[limit]=500&page[skip]=0&filter[isDraft]=false&filter[onWagon]=false&filter[skipStatuses]=true",
+  );
 
   appendLog("checklistkatalog", {
     count: payload.data?.length || 0,
     sample: payload.data?.slice(0, 3) || [],
   });
 
-  return payload.data || [];
+  return (payload.data || []).map((record) => ({
+    id: record.id,
+    title:
+      record.attributes?.title ||
+      record.attributes?.name ||
+      record.attributes?.["last-name-segment"] ||
+      `Checklist ${record.id}`,
+  }));
 }
 
-async function loadChecklistItemsExport(checklistId) {
-  const payload = await fetchChecklistExport({
-    key: "checklistItem",
-    checklistId,
-    snapshotId: "all",
-    page: { skip: 0, limit: 500 },
-    sort: { field: "title", descending: false },
-  });
+async function loadChecklistItems(checklistId) {
+  const payload = await fetchJsonViaViewer(
+    `/checklist-items?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}`,
+  );
 
-  appendLog("checklistitems export", {
+  appendLog("checklistitems", {
     checklistId,
     count: payload.data?.length || 0,
     sample: payload.data?.slice(0, 5) || [],
   });
 
-  return payload.data || [];
+  return (payload.data || []).map((record) => ({
+    id: record.id,
+    title: record.attributes?.title || record.attributes?.name || "",
+    name: record.attributes?.name || record.attributes?.title || "",
+    inputType:
+      record.attributes?.["input-type"] ||
+      record.attributes?.inputType ||
+      record.attributes?._inputType ||
+      "",
+  }));
 }
 
 function buildIncludedIndex(included = []) {
@@ -977,7 +986,7 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex) {
   return entries;
 }
 
-async function loadSignatureEntriesFromChecklistExports() {
+async function loadSignatureEntriesFromChecklistInstances() {
   const checklistCatalog = await loadChecklistCatalog();
   const entries = [];
 
@@ -988,7 +997,7 @@ async function loadSignatureEntriesFromChecklistExports() {
 
     let checklistItems = [];
     try {
-      checklistItems = await loadChecklistItemsExport(checklistId);
+      checklistItems = await loadChecklistItems(checklistId);
     } catch (error) {
       appendLog("checklistitems fel", {
         checklistId,
@@ -1219,8 +1228,8 @@ async function loadSignatureOverview() {
       await loadWorkflows();
     }
 
-    const entries = await loadSignatureEntriesFromChecklistExports();
-    appendLog("signaturer via checklistinstanser", { count: entries.length });
+      const entries = await loadSignatureEntriesFromChecklistInstances();
+      appendLog("signaturer via checklistinstanser", { count: entries.length });
 
     entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
     state.signatureEntries = entries.filter(
