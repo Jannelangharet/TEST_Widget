@@ -754,6 +754,7 @@ async function loadSignatureOverview() {
   elements.checklistRoot.classList.add("hidden");
   elements.checklistRoot.innerHTML = "";
   elements.exportPdf.disabled = true;
+  appendLog("Signaturoversikt", "Startar automatisk laddning av checklistsignaturer.");
 
   try {
     if (!state.projectId) {
@@ -783,6 +784,7 @@ async function loadSignatureOverview() {
       elements.checklistEmpty.classList.remove("hidden");
       elements.checklistStatus.textContent =
         "Jag hittade inga checklistinstanser med 33. Signatur i de checklistposter som kunde lasas i projektet.";
+      appendLog("Signaturoversikt", "Inga checklistinstanser med 33. Signatur hittades.");
       return;
     }
 
@@ -794,6 +796,20 @@ async function loadSignatureOverview() {
     showError(`Kunde inte lasa signaturoversikten: ${error.message || error}`);
     elements.checklistStatus.textContent =
       "Signaturoversikten misslyckades. Se debug-loggen for exakt API-svar.";
+  }
+}
+
+async function initializeProjectData() {
+  try {
+    await loadProjectContext();
+  } catch (error) {
+    appendLog("Projektinfo", `Projektinfo kunde inte laddas initialt: ${error.message || error}`);
+  }
+
+  try {
+    await loadSignatureOverview();
+  } catch (error) {
+    appendLog("Signaturoversikt", `Autoladdning misslyckades: ${error.message || error}`);
   }
 }
 
@@ -860,9 +876,8 @@ async function connectWidget() {
     setSelectionState("Klicka pa ett objekt i modellen", false);
     elements.actionFeedback.textContent = "Widgeten ar ansluten och lyssnar nu pa objektklick.";
     appendLog("Anslutning klar", "Widgeten ar nu kopplad till parent.");
-    await loadProjectContext();
-    appendLog("Autoladdning", "Laddar signaturoversikt automatiskt efter anslutning.");
-    await loadSignatureOverview();
+    appendLog("Autoladdning", "Laddar projektdata och signaturoversikt automatiskt efter anslutning.");
+    await initializeProjectData();
   } catch (error) {
     setConnectionState(false, "Anslutning misslyckades");
     showError(`Kunde inte ansluta till StreamBIM: ${error.message || error}`);
