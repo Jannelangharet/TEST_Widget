@@ -769,22 +769,46 @@ function buildSignatureEntry(topic, comments) {
 }
 
 async function loadChecklistCatalog() {
-  const payload = await fetchJsonViaViewer(
-    buildProjectApiUrl("/checklists?page[limit]=500&page[skip]=0&filter[isDraft]=false&filter[onWagon]=false&filter[skipStatuses]=true"),
-  );
+  const limit = 500;
+  const allRecords = [];
+  let skip = 0;
+
+  while (true) {
+    const payload = await fetchJsonViaViewer(
+      buildProjectApiUrl(
+        `/checklists?page[limit]=${limit}&page[skip]=${skip}&filter[isDraft]=false&filter[skipStatuses]=true`,
+      ),
+    );
+
+    const chunk = payload.data || [];
+    allRecords.push(...chunk);
+    appendLog("checklistkatalog sida", {
+      skip,
+      fetched: chunk.length,
+      total: allRecords.length,
+      sample: chunk.slice(0, 3),
+    });
+
+    if (chunk.length < limit) {
+      break;
+    }
+
+    skip += limit;
+  }
 
   appendLog("checklistkatalog", {
-    count: payload.data?.length || 0,
-    sample: payload.data?.slice(0, 3) || [],
+    count: allRecords.length,
+    sample: allRecords.slice(0, 5),
   });
 
-  return (payload.data || []).map((record) => ({
+  return allRecords.map((record) => ({
     id: record.id,
     title:
       record.attributes?.title ||
       record.attributes?.name ||
       record.attributes?.["last-name-segment"] ||
       `Checklist ${record.id}`,
+    raw: record.attributes || {},
   }));
 }
 
