@@ -754,39 +754,67 @@ async function loadChecklistItemsExport(checklistId) {
   return payload.data || [];
 }
 
-async function loadChecklistObjectsExport(checklistId) {
-  const payload = await fetchChecklistExport({
-    key: "object",
-    checklistId,
-    snapshotId: "all",
-    page: { skip: 0, limit: 2000 },
-    sort: { field: "title", descending: false },
-  });
+function buildIncludedIndex(included = []) {
+  const index = new Map();
+  for (const record of included) {
+    index.set(`${record.type}:${record.id}`, record);
+  }
+  return index;
+}
 
-  appendLog("checklistobject export", {
+function getRelationshipData(record, key) {
+  return (
+    record?.relationships?.[key]?.data ||
+    record?.relationships?.[key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`)]?.data ||
+    null
+  );
+}
+
+function resolveIncluded(record, key, includedIndex) {
+  const relationship = getRelationshipData(record, key);
+  if (!relationship || Array.isArray(relationship)) {
+    return null;
+  }
+
+  return includedIndex.get(`${relationship.type}:${relationship.id}`) || null;
+}
+
+async function loadChecklistSnapshots(checklistId) {
+  const payload = await fetchJsonViaViewer(
+    `/project-${state.projectId}/api/v1/v2/checklist-snapshots?page[limit]=500&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}&filter[includeNotFinalized]=true`,
+  );
+
+  appendLog("checklistsnapshots", {
     checklistId,
     count: payload.data?.length || 0,
-    sample: payload.data?.slice(0, 2) || [],
+    sample: payload.data?.slice(0, 3) || [],
   });
 
   return payload.data || [];
 }
 
-function itemLooksLikeSignature(item) {
-  const title = pickFirstDefined(
-    item?.title,
-    item?.name,
-    item?.label,
-    item?.checklistItem?.title,
-    item?.checklistItem?.name,
+async function loadChecklistItemInstances(checklistId, snapshotId = "") {
+  const snapshotFilter = snapshotId
+    ? `&filter[checklistSnapshot]=${encodeURIComponent(snapshotId)}`
+    : "";
+  const payload = await fetchJsonViaViewer(
+    `/project-${state.projectId}/api/v1/v2/checklist-item-instances?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}${snapshotFilter}&include=checklist-item,status,signed-by-user,checklist-snapshot`,
   );
-  const inputType = `${pickFirstDefined(
-    item?.inputType,
-    item?._inputType,
-    item?.type,
-    item?.checklistItem?._inputType,
-    item?.checklistItem?.inputType,
-  )}`.toLowerCase();
+
+  appendLog("checklistiteminstances", {
+    checklistId,
+    snapshotId: snapshotId || "(ingen snapshot)",
+    count: payload.data?.length || 0,
+    sample: payload.data?.slice(0, 3) || [],
+    included: payload.included?.slice(0, 5) || [],
+  });
+
+  return payload;
+}
+
+function itemLooksLikeSignature(item) {
+  const title = pickFirstDefined(item?.title, item?.name, item?.label);
+  const inputType = `${pickFirstDefined(item?.inputType, item?._inputType, item?.type)}`.toLowerCase();
 
   return matchesSignatureLabel(title) || inputType === "signature";
 }
@@ -816,60 +844,123 @@ function extractSignatureNames(item) {
   return collectSignatureValues(item);
 }
 
-function buildExportSignatureEntries(checklist, objectRows) {
+function parseChecklistItemInstance(instance, includedIndex) {
+  const attrs = instance?.attributes || {};
+  const checklistItem = resolveIncluded(instance, "checklist-item", includedIndex);
+  const checklistItemAttrs = checklistItem?.attributes || {};
+  const statusRecord = resolveIncluded(instance, "status", includedIndex);
+  const signedByUser = resolveIncluded(instance, "signed-by-user", includedIndex);
+  const snapshotRecord = resolveIncluded(instance, "checklist-snapshot", includedIndex);
+  const snapshotAttrs = snapshotRecord?.attributes || {};
+
+  return {
+    id: instance.id,
+    title: pickFirstDefined(
+      checklistItemAttrs.title,
+      checklistItemAttrs.name,
+      attrs.title,
+      attrs.name,
+      attrs.label,
+    ),
+    inputType: pickFirstDefined(
+      checklistItemAttrs["input-type"],
+      checklistItemAttrs.inputType,
+      checklistItemAttrs._inputType,
+      attrs["input-type"],
+      attrs.inputType,
+      attrs._inputType,
+    ),
+    status: pickFirstDefined(
+      statusRecord?.attributes?.name,
+      statusRecord?.id,
+      attrs.status,
+      attrs["status-name"],
+    ),
+    signedByUser: pickFirstDefined(
+      signedByUser?.attributes?.name,
+      signedByUser?.attributes?.fullName,
+      signedByUser?.attributes?.email,
+      attrs["signed-by-user"],
+      attrs.signedByUser,
+    ),
+    value: pickFirstDefined(
+      attrs.value,
+      attrs.options,
+      attrs.optionValue,
+      attrs.optionText,
+      attrs.otherValue,
+      attrs.displayValue,
+    ),
+    createdAt: pickFirstDefined(
+      attrs["creation-date"],
+      attrs.createdAt,
+      snapshotAttrs["start-date"],
+      snapshotAttrs.startDate,
+      snapshotAttrs["creation-date"],
+    ),
+    snapshotId: snapshotRecord?.id || "",
+    snapshotLabel: pickFirstDefined(
+      snapshotAttrs.name,
+      snapshotAttrs.title,
+      snapshotAttrs["start-date"],
+      snapshotAttrs.startDate,
+    ),
+  };
+}
+
+function buildInstanceSignatureEntries(checklist, records, includedIndex) {
   const entries = [];
+  const groups = new Map();
 
-  for (const row of objectRows) {
-    const items = Array.isArray(row?.items) ? row.items : [];
-    const signatureItems = items.filter(itemLooksLikeSignature).filter((item) => {
-      return isDoneStatus(item?.status) || isDoneStatus(item?.checklistItemInstance?.status) || item?.signedByUser;
-    });
-
-    if (!signatureItems.length) {
+  for (const record of records) {
+    const item = parseChecklistItemInstance(record, includedIndex);
+    if (!itemLooksLikeSignature(item)) {
       continue;
     }
 
-    const signatures = uniqueStrings(signatureItems.flatMap(extractSignatureNames));
+    if (!isDoneStatus(item.status) && !item.signedByUser) {
+      continue;
+    }
+
+    const signatures = uniqueStrings(extractSignatureNames(item));
     if (!signatures.length) {
-      appendLog("signaturrad utan namn", {
+      appendLog("signaturinstans utan namn", {
         checklistId: checklist.id,
-        row,
-        signatureItems,
+        item,
+        record,
       });
       continue;
     }
 
-    const objectId = pickFirstDefined(
-      row.objectId,
-      row.object?.id,
-      row.object,
-      row.ifcObjectId,
-    );
-    const createdAt = pickFirstDefined(
-      row.createdAt,
-      row.creationDate,
-      row.startDate,
-      row.closedDate,
-      row.date,
-    );
-    const title = pickFirstDefined(
-      row.title,
-      row.name,
-      checklist.title,
-      `Checklista ${checklist.id}`,
-    );
+    const groupKey = item.snapshotId || item.id;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        topicId: "",
+        checklistInstanceId: item.snapshotId || item.id,
+        title: checklist.title || `Checklista ${checklist.id}`,
+        checklistTitle: checklist.title || `Checklista ${checklist.id}`,
+        createdAt: item.createdAt,
+        createdLabel: formatDate(item.createdAt),
+        workflow: "Checklist-instans",
+        signatures: [],
+        url: buildChecklistUrl(checklist.id),
+      });
+    }
 
-    entries.push({
-      topicId: "",
-      checklistInstanceId: objectId || checklist.id,
-      title,
-      checklistTitle: checklist.title || title,
-      createdAt,
-      createdLabel: formatDate(createdAt),
-      workflow: "Checklist-export",
-      signatures,
-      url: buildChecklistUrl(checklist.id, objectId),
-    });
+    const group = groups.get(groupKey);
+    group.signatures.push(...signatures);
+    if (!group.createdAt && item.createdAt) {
+      group.createdAt = item.createdAt;
+      group.createdLabel = formatDate(item.createdAt);
+    }
+    if (item.snapshotId) {
+      group.url = buildChecklistUrl(checklist.id);
+    }
+  }
+
+  for (const entry of groups.values()) {
+    entry.signatures = uniqueStrings(entry.signatures);
+    entries.push(entry);
   }
 
   return entries;
@@ -907,17 +998,40 @@ async function loadSignatureEntriesFromChecklistExports() {
     });
 
     try {
-      const objectRows = await loadChecklistObjectsExport(checklistId);
-      const checklistEntries = buildExportSignatureEntries(
-        {
-          id: checklistId,
-          title: checklistTitle,
-        },
-        objectRows,
-      );
-      entries.push(...checklistEntries);
+      const snapshots = await loadChecklistSnapshots(checklistId);
+      const snapshotIds = snapshots.map((snapshot) => snapshot.id);
+
+      if (!snapshotIds.length) {
+        const payload = await loadChecklistItemInstances(checklistId);
+        const includedIndex = buildIncludedIndex(payload.included || []);
+        entries.push(
+          ...buildInstanceSignatureEntries(
+            {
+              id: checklistId,
+              title: checklistTitle,
+            },
+            payload.data || [],
+            includedIndex,
+          ),
+        );
+      } else {
+        for (const snapshotId of snapshotIds) {
+          const payload = await loadChecklistItemInstances(checklistId, snapshotId);
+          const includedIndex = buildIncludedIndex(payload.included || []);
+          entries.push(
+            ...buildInstanceSignatureEntries(
+              {
+                id: checklistId,
+                title: checklistTitle,
+              },
+              payload.data || [],
+              includedIndex,
+            ),
+          );
+        }
+      }
     } catch (error) {
-      appendLog("checklistobject fel", {
+      appendLog("checklistinstanser fel", {
         checklistId,
         message: error.message || String(error),
       });
@@ -1094,28 +1208,8 @@ async function loadSignatureOverview() {
       await loadWorkflows();
     }
 
-    let entries = [];
-    try {
-      entries = await loadSignatureEntriesFromChecklistExports();
-      appendLog("signaturer via export", { count: entries.length });
-    } catch (error) {
-      appendLog("exportvag misslyckades", error.message || String(error));
-    }
-
-    if (!entries.length) {
-      appendLog("fallback", "Byter till topics/comment-sokning eftersom checklist-exporten inte gav nagra signaturer.");
-      const topics = await loadAllTopics();
-      const checklistTopics = topics.filter(isChecklistTopic);
-      appendLog("checklisttopics", { totalTopics: topics.length, checklistTopics: checklistTopics.length });
-
-      for (const topic of checklistTopics) {
-        const comments = await loadTopicComments(topic.id);
-        const entry = buildSignatureEntry(topic, comments);
-        if (entry) {
-          entries.push(entry);
-        }
-      }
-    }
+    const entries = await loadSignatureEntriesFromChecklistExports();
+    appendLog("signaturer via checklistinstanser", { count: entries.length });
 
     entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
     state.signatureEntries = entries.filter(
