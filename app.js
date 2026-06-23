@@ -425,6 +425,30 @@ function buildChecklistUrl(checklistId, objectId = "") {
   return url;
 }
 
+function buildChecklistItemUrl(checklistId, objectId = "", itemId = "", snapshotId = "") {
+  let url = `https://app.streambim.com/webapp/default/#/viewer/checklists/checklist/${encodeURIComponent(checklistId)}`;
+  if (objectId) {
+    url += `/object/${encodeURIComponent(objectId)}`;
+  }
+  if (itemId) {
+    url += `/item/${encodeURIComponent(itemId)}`;
+  }
+
+  const params = new URLSearchParams({
+    apply: "false",
+    projectId: String(state.projectId || ""),
+  });
+
+  if (state.buildingId) {
+    params.set("buildingId", String(state.buildingId));
+  }
+  if (snapshotId) {
+    params.set("snapshotId", String(snapshotId));
+  }
+
+  return `${url}?${params.toString()}`;
+}
+
 function matchesSignatureLabel(value) {
   return normalizeWhitespace(value).toLowerCase().includes("33. signatur");
 }
@@ -877,6 +901,15 @@ function resolveIncluded(record, key, includedIndex) {
   return includedIndex.get(`${relationship.type}:${relationship.id}`) || null;
 }
 
+function getRelationshipId(record, key) {
+  const relationship = getRelationshipData(record, key);
+  if (!relationship || Array.isArray(relationship)) {
+    return "";
+  }
+
+  return relationship.id || "";
+}
+
 async function loadChecklistSnapshots(checklistId) {
   const payload = await fetchJsonViaViewer(
     buildProjectApiUrl(
@@ -957,6 +990,13 @@ function parseChecklistItemInstance(instance, includedIndex) {
   const signedByUser = resolveIncluded(instance, "signed-by-user", includedIndex);
   const snapshotRecord = resolveIncluded(instance, "checklist-snapshot", includedIndex);
   const snapshotAttrs = snapshotRecord?.attributes || {};
+  const checklistItemId = getRelationshipId(instance, "checklist-item");
+  const objectId = pickFirstDefined(
+    getRelationshipId(instance, "object"),
+    attrs.object,
+    attrs["object-id"],
+    attrs.objectId,
+  );
 
   return {
     id: instance.id,
@@ -1024,6 +1064,8 @@ function parseChecklistItemInstance(instance, includedIndex) {
       checklistItem: checklistItemAttrs,
       instance: attrs,
     },
+    checklistItemId,
+    objectId,
   };
 }
 
@@ -1051,18 +1093,22 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex) {
       continue;
     }
 
-    const groupKey = item.snapshotId || item.id;
+    const groupKey = [checklist.id, item.objectId || "", item.snapshotId || "", item.checklistItemId || item.id].join("|");
     if (!groups.has(groupKey)) {
       groups.set(groupKey, {
         topicId: "",
-        checklistInstanceId: item.snapshotId || item.id,
+        checklistInstanceId: item.id,
         title: checklist.title || `Checklista ${checklist.id}`,
         checklistTitle: checklist.title || `Checklista ${checklist.id}`,
         createdAt: item.createdAt,
         createdLabel: formatDate(item.createdAt),
         workflow: "Checklist-instans",
         signatures: [],
-        url: buildChecklistUrl(checklist.id),
+        url: buildChecklistItemUrl(checklist.id, item.objectId, item.checklistItemId || item.id, item.snapshotId),
+        objectId: item.objectId,
+        itemId: item.checklistItemId || item.id,
+        snapshotId: item.snapshotId,
+        matchedItem: item,
       });
     }
 
@@ -1072,9 +1118,7 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex) {
       group.createdAt = item.createdAt;
       group.createdLabel = formatDate(item.createdAt);
     }
-    if (item.snapshotId) {
-      group.url = buildChecklistUrl(checklist.id);
-    }
+    group.url = buildChecklistItemUrl(checklist.id, item.objectId, item.checklistItemId || item.id, item.snapshotId);
   }
 
   for (const entry of groups.values()) {
@@ -1094,36 +1138,10 @@ async function loadSignatureEntriesFromChecklistInstances() {
     const checklistTitle = checklist.title || `Checklist ${checklistId}`;
     elements.checklistStatus.textContent = `Soker signaturer i ${checklistTitle}...`;
 
-    let checklistItems = [];
-    try {
-      checklistItems = await loadChecklistItems(checklistId);
-    } catch (error) {
-      appendLog("checklistitems fel", {
-        checklistId,
-        message: error.message || String(error),
-      });
-      continue;
-    }
-
-    const hasSignatureField = checklistItems.some((item) => itemLooksLikeSignature(item));
-    if (!hasSignatureField) {
-      appendLog("ingen signaturmatch i checklista", {
-        checklistId,
-        checklistTitle,
-        sampleItems: checklistItems.slice(0, 8),
-      });
-      continue;
-    }
-
-    appendLog("signaturchecklista hittad", {
-      checklistId,
-      checklistTitle,
-      matchingItems: checklistItems.filter((item) => itemLooksLikeSignature(item)),
-    });
-
     try {
       const snapshots = await loadChecklistSnapshots(checklistId);
       const snapshotIds = snapshots.map((snapshot) => snapshot.id);
+      let checklistEntryCountBefore = entries.length;
 
       if (!snapshotIds.length) {
         const payload = await loadChecklistItemInstances(checklistId);
@@ -1153,6 +1171,20 @@ async function loadSignatureEntriesFromChecklistInstances() {
             ),
           );
         }
+      }
+
+      if (entries.length > checklistEntryCountBefore) {
+        appendLog("signaturchecklista hittad", {
+          checklistId,
+          checklistTitle,
+          foundEntries: entries.slice(checklistEntryCountBefore),
+        });
+      } else {
+        appendLog("ingen signaturinstans i checklista", {
+          checklistId,
+          checklistTitle,
+          snapshots: snapshotIds,
+        });
       }
     } catch (error) {
       appendLog("checklistinstanser fel", {
