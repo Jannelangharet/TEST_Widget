@@ -429,6 +429,19 @@ function matchesSignatureLabel(value) {
   return normalizeWhitespace(value).toLowerCase().includes("33. signatur");
 }
 
+function looksLikeSignatureField(values) {
+  const strings = uniqueStrings(collectStrings(values));
+  const normalized = strings.map((value) => normalizeWhitespace(value).toLowerCase());
+
+  if (normalized.some((value) => value.includes("33. signatur"))) {
+    return true;
+  }
+
+  const has33 = normalized.some((value) => value === "33" || value.startsWith("33.") || value.includes(" 33"));
+  const hasSignatureWord = normalized.some((value) => value.includes("signatur") || value.includes("signature"));
+  return has33 && hasSignatureWord;
+}
+
 function isDoneStatus(status) {
   if (!status) {
     return false;
@@ -788,13 +801,30 @@ async function loadChecklistItems(checklistId) {
 
   return (payload.data || []).map((record) => ({
     id: record.id,
-    title: record.attributes?.title || record.attributes?.name || "",
-    name: record.attributes?.name || record.attributes?.title || "",
+    title:
+      record.attributes?.title ||
+      record.attributes?.name ||
+      record.attributes?.displayName ||
+      record.attributes?.["display-name"] ||
+      "",
+    name:
+      record.attributes?.name ||
+      record.attributes?.title ||
+      record.attributes?.displayName ||
+      record.attributes?.["display-name"] ||
+      "",
     inputType:
       record.attributes?.["input-type"] ||
       record.attributes?.inputType ||
       record.attributes?._inputType ||
       "",
+    number:
+      record.attributes?.number ||
+      record.attributes?.index ||
+      record.attributes?.order ||
+      record.attributes?.position ||
+      "",
+    raw: record.attributes || {},
   }));
 }
 
@@ -863,8 +893,11 @@ async function loadChecklistItemInstances(checklistId, snapshotId = "") {
 function itemLooksLikeSignature(item) {
   const title = pickFirstDefined(item?.title, item?.name, item?.label);
   const inputType = `${pickFirstDefined(item?.inputType, item?._inputType, item?.type)}`.toLowerCase();
-
-  return matchesSignatureLabel(title) || inputType === "signature";
+  return (
+    looksLikeSignatureField([title, item?.name, item?.label, item?.number, item?.raw]) ||
+    (inputType === "signature" &&
+      looksLikeSignatureField([title, item?.name, item?.label, item?.number, item?.raw, "signature"]))
+  );
 }
 
 function extractSignatureNames(item) {
@@ -906,6 +939,8 @@ function parseChecklistItemInstance(instance, includedIndex) {
     title: pickFirstDefined(
       checklistItemAttrs.title,
       checklistItemAttrs.name,
+      checklistItemAttrs.displayName,
+      checklistItemAttrs["display-name"],
       attrs.title,
       attrs.name,
       attrs.label,
@@ -953,6 +988,18 @@ function parseChecklistItemInstance(instance, includedIndex) {
       snapshotAttrs["start-date"],
       snapshotAttrs.startDate,
     ),
+    number: pickFirstDefined(
+      checklistItemAttrs.number,
+      checklistItemAttrs.index,
+      checklistItemAttrs.order,
+      attrs.number,
+      attrs.index,
+      attrs.order,
+    ),
+    raw: {
+      checklistItem: checklistItemAttrs,
+      instance: attrs,
+    },
   };
 }
 
@@ -1034,15 +1081,20 @@ async function loadSignatureEntriesFromChecklistInstances() {
       continue;
     }
 
-    const hasSignatureField = checklistItems.some((item) => matchesSignatureLabel(item?.title || item?.name || ""));
+    const hasSignatureField = checklistItems.some((item) => itemLooksLikeSignature(item));
     if (!hasSignatureField) {
+      appendLog("ingen signaturmatch i checklista", {
+        checklistId,
+        checklistTitle,
+        sampleItems: checklistItems.slice(0, 8),
+      });
       continue;
     }
 
     appendLog("signaturchecklista hittad", {
       checklistId,
       checklistTitle,
-      matchingItems: checklistItems.filter((item) => matchesSignatureLabel(item?.title || item?.name || "")),
+      matchingItems: checklistItems.filter((item) => itemLooksLikeSignature(item)),
     });
 
     try {
