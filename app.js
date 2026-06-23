@@ -317,6 +317,15 @@ async function fetchJsonViaViewer(url, method = "GET", body = undefined) {
 
   const raw = await callApi("makeApiRequest", request);
   appendLog("makeApiRequest svar", { url, raw: typeof raw === "string" ? raw.slice(0, 1000) : raw });
+  if (typeof raw !== "string") {
+    return raw;
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("<")) {
+    throw new Error(`API-svaret for ${url} var HTML i stallet for JSON.`);
+  }
+
   return JSON.parse(raw);
 }
 
@@ -781,7 +790,7 @@ function resolveIncluded(record, key, includedIndex) {
 
 async function loadChecklistSnapshots(checklistId) {
   const payload = await fetchJsonViaViewer(
-    `/project-${state.projectId}/api/v1/v2/checklist-snapshots?page[limit]=500&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}&filter[includeNotFinalized]=true`,
+    `/checklist-snapshots?page[limit]=500&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}&filter[includeNotFinalized]=true`,
   );
 
   appendLog("checklistsnapshots", {
@@ -798,7 +807,7 @@ async function loadChecklistItemInstances(checklistId, snapshotId = "") {
     ? `&filter[checklistSnapshot]=${encodeURIComponent(snapshotId)}`
     : "";
   const payload = await fetchJsonViaViewer(
-    `/project-${state.projectId}/api/v1/v2/checklist-item-instances?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}${snapshotFilter}&include=checklist-item,status,signed-by-user,checklist-snapshot`,
+    `/checklist-item-instances?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}${snapshotFilter}&include=checklist-item,status,signed-by-user,checklist-snapshot&withDeletedComments=true`,
   );
 
   appendLog("checklistiteminstances", {
