@@ -303,9 +303,33 @@ async function loadProjectContext() {
   }
 }
 
+function getViewerOrigin() {
+  try {
+    if (document.referrer) {
+      return new URL(document.referrer).origin;
+    }
+  } catch (error) {
+    appendLog("Viewer origin", `Kunde inte lasa document.referrer: ${error.message || error}`);
+  }
+
+  return "https://app.streambim.com";
+}
+
+function toAbsoluteViewerUrl(url) {
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+
+  return `${getViewerOrigin()}${url}`;
+}
+
+function buildProjectApiUrl(pathWithQuery) {
+  return toAbsoluteViewerUrl(`/project-${encodeURIComponent(state.projectId)}/api/v1/v2${pathWithQuery}`);
+}
+
 async function fetchJsonViaViewer(url, method = "GET", body = undefined) {
   const request = {
-    url,
+    url: toAbsoluteViewerUrl(url),
     method,
     accept: "application/vnd.api+json",
     contentType: "application/vnd.api+json",
@@ -316,14 +340,14 @@ async function fetchJsonViaViewer(url, method = "GET", body = undefined) {
   }
 
   const raw = await callApi("makeApiRequest", request);
-  appendLog("makeApiRequest svar", { url, raw: typeof raw === "string" ? raw.slice(0, 1000) : raw });
+  appendLog("makeApiRequest svar", { url: request.url, raw: typeof raw === "string" ? raw.slice(0, 1000) : raw });
   if (typeof raw !== "string") {
     return raw;
   }
 
   const trimmed = raw.trim();
   if (trimmed.startsWith("<")) {
-    throw new Error(`API-svaret for ${url} var HTML i stallet for JSON.`);
+    throw new Error(`API-svaret for ${request.url} var HTML i stallet for JSON.`);
   }
 
   return JSON.parse(raw);
@@ -733,7 +757,7 @@ function buildSignatureEntry(topic, comments) {
 
 async function loadChecklistCatalog() {
   const payload = await fetchJsonViaViewer(
-    "/checklists?page[limit]=500&page[skip]=0&filter[isDraft]=false&filter[onWagon]=false&filter[skipStatuses]=true",
+    buildProjectApiUrl("/checklists?page[limit]=500&page[skip]=0&filter[isDraft]=false&filter[onWagon]=false&filter[skipStatuses]=true"),
   );
 
   appendLog("checklistkatalog", {
@@ -753,7 +777,7 @@ async function loadChecklistCatalog() {
 
 async function loadChecklistItems(checklistId) {
   const payload = await fetchJsonViaViewer(
-    `/checklist-items?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}`,
+    buildProjectApiUrl(`/checklist-items?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}`),
   );
 
   appendLog("checklistitems", {
@@ -801,7 +825,9 @@ function resolveIncluded(record, key, includedIndex) {
 
 async function loadChecklistSnapshots(checklistId) {
   const payload = await fetchJsonViaViewer(
-    `/checklist-snapshots?page[limit]=500&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}&filter[includeNotFinalized]=true`,
+    buildProjectApiUrl(
+      `/checklist-snapshots?page[limit]=500&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}&filter[includeNotFinalized]=true`,
+    ),
   );
 
   appendLog("checklistsnapshots", {
@@ -818,7 +844,9 @@ async function loadChecklistItemInstances(checklistId, snapshotId = "") {
     ? `&filter[checklistSnapshot]=${encodeURIComponent(snapshotId)}`
     : "";
   const payload = await fetchJsonViaViewer(
-    `/checklist-item-instances?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}${snapshotFilter}&include=checklist-item,status,signed-by-user,checklist-snapshot&withDeletedComments=true`,
+    buildProjectApiUrl(
+      `/checklist-item-instances?page[limit]=1000&page[skip]=0&filter[checklist]=${encodeURIComponent(checklistId)}${snapshotFilter}&include=checklist-item,status,signed-by-user,checklist-snapshot&withDeletedComments=true`,
+    ),
   );
 
   appendLog("checklistiteminstances", {
