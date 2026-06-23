@@ -126,6 +126,7 @@ function setConnectionState(connected, message) {
   state.connected = connected;
   elements.connectionBadge.textContent = message;
   elements.connectionBadge.className = connected ? "badge badge-live" : "badge badge-waiting";
+  elements.loadChecklists.disabled = !connected;
 }
 
 function setSelectionState(message, active) {
@@ -860,6 +861,8 @@ async function connectWidget() {
     elements.actionFeedback.textContent = "Widgeten ar ansluten och lyssnar nu pa objektklick.";
     appendLog("Anslutning klar", "Widgeten ar nu kopplad till parent.");
     await loadProjectContext();
+    appendLog("Autoladdning", "Laddar signaturoversikt automatiskt efter anslutning.");
+    await loadSignatureOverview();
   } catch (error) {
     setConnectionState(false, "Anslutning misslyckades");
     showError(`Kunde inte ansluta till StreamBIM: ${error.message || error}`);
