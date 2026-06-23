@@ -950,10 +950,12 @@ async function loadChecklistItemInstances(checklistId, snapshotId = "") {
 function itemLooksLikeSignature(item) {
   const title = pickFirstDefined(item?.title, item?.name, item?.label);
   const inputType = `${pickFirstDefined(item?.inputType, item?._inputType, item?.type)}`.toLowerCase();
+  if (inputType === "signature") {
+    return true;
+  }
   return (
     looksLikeSignatureField([title, item?.name, item?.label, item?.number, item?.raw]) ||
-    (inputType === "signature" &&
-      looksLikeSignatureField([title, item?.name, item?.label, item?.number, item?.raw, "signature"]))
+    looksLikeSignatureField([title, item?.name, item?.label, item?.number, item?.raw, "signature"])
   );
 }
 
@@ -1128,7 +1130,9 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
       groups.set(groupKey, {
         topicId: "",
         checklistInstanceId: item.id,
-        title: checklist.title || `Checklista ${checklist.id}`,
+        title:
+          pickFirstDefined(item.title, item.name) ||
+          `${checklist.title || `Checklista ${checklist.id}`} - signatur`,
         checklistTitle: checklist.title || `Checklista ${checklist.id}`,
         createdAt: item.createdAt,
         createdLabel: formatDate(item.createdAt),
@@ -1260,7 +1264,7 @@ function renderSignatureOverview(entries) {
   summary.className = "checklist-summary";
   const signatureCount = entries.reduce((sum, entry) => sum + entry.signatures.length, 0);
   [
-    { value: entries.length, label: "checklistor med 33. Signatur" },
+    { value: entries.length, label: "signaturposter hittade" },
     { value: signatureCount, label: "signaturvarder hittade" },
     { value: entries[0]?.createdLabel || "-", label: "senaste skapad" },
   ].forEach((item) => {
@@ -1305,7 +1309,7 @@ function renderSignatureOverview(entries) {
 
       const label = document.createElement("span");
       label.className = "signature-label";
-      label.textContent = "33. Signatur";
+      label.textContent = entry.title || "Signatur";
       signatureBlock.appendChild(label);
 
       const link = document.createElement("a");
@@ -1338,7 +1342,7 @@ function renderSignatureOverview(entries) {
   });
 
   elements.checklistRoot.classList.remove("hidden");
-  elements.checklistStatus.textContent = `Hittade ${entries.length} checklistor som innehaller faltet 33. Signatur.`;
+  elements.checklistStatus.textContent = `Hittade ${entries.length} ifyllda signaturposter i projektet.`;
   elements.exportPdf.disabled = !entries.length;
 }
 
@@ -1382,13 +1386,13 @@ function openPdfReport() {
   </head>
   <body>
     <h1>Signaturrapport</h1>
-    <p>Projekt ${state.projectId} | Genererad ${formatDate(new Date().toISOString())} | Endast checklistor som innehaller 33. Signatur.</p>
+    <p>Projekt ${state.projectId} | Genererad ${formatDate(new Date().toISOString())} | Endast ifyllda signaturposter.</p>
     <table>
       <thead>
         <tr>
           <th>Checklista</th>
           <th>Skapad</th>
-          <th>33. Signatur</th>
+          <th>Signatur</th>
           <th>Lank</th>
         </tr>
       </thead>
@@ -1434,8 +1438,8 @@ async function loadSignatureOverview() {
     if (!state.signatureEntries.length) {
       elements.checklistEmpty.classList.remove("hidden");
       elements.checklistStatus.textContent =
-        "Jag hittade inga checklistinstanser med 33. Signatur i de checklistposter som kunde lasas i projektet.";
-      appendLog("Signaturoversikt", "Inga checklistinstanser med 33. Signatur hittades.");
+        "Jag hittade inga ifyllda signaturposter i de checklistinstanser som kunde lasas i projektet.";
+      appendLog("Signaturoversikt", "Inga ifyllda signaturposter hittades.");
       return;
     }
 
