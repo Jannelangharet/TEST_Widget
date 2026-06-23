@@ -15,6 +15,13 @@ const STREAMBIM_SCRIPT_CANDIDATES = [
   "https://cdn.jsdelivr.net/gh/streambim/streambim-widget-api@master/dist/streambim-widget-api.min.js",
 ];
 
+const CHECKLIST_STATUS_IDS = {
+  open: "2000",
+  done: "3000",
+  closed: "4000",
+  notRelevant: "4500",
+};
+
 const elements = {
   connectionBadge: document.getElementById("connection-badge"),
   selectionBadge: document.getElementById("selection-badge"),
@@ -472,7 +479,8 @@ function isDoneStatus(status) {
   }
 
   if (typeof status === "string") {
-    return status.toLowerCase() === "done";
+    const normalized = status.toLowerCase();
+    return normalized === "done" || normalized === CHECKLIST_STATUS_IDS.done || normalized === CHECKLIST_STATUS_IDS.notRelevant;
   }
 
   if (typeof status === "object") {
@@ -482,7 +490,13 @@ function isDoneStatus(status) {
         status.value === "done" ||
         status.name === "done" ||
         status.id === "done" ||
-        status.status === "done",
+        status.status === "done" ||
+        status.value === CHECKLIST_STATUS_IDS.done ||
+        status.id === CHECKLIST_STATUS_IDS.done ||
+        status.status === CHECKLIST_STATUS_IDS.done ||
+        status.value === CHECKLIST_STATUS_IDS.notRelevant ||
+        status.id === CHECKLIST_STATUS_IDS.notRelevant ||
+        status.status === CHECKLIST_STATUS_IDS.notRelevant,
     );
   }
 
@@ -993,6 +1007,9 @@ function parseChecklistItemInstance(instance, includedIndex) {
   const snapshotRecord = resolveIncluded(instance, "checklist-snapshot", includedIndex);
   const snapshotAttrs = snapshotRecord?.attributes || {};
   const checklistItemId = getRelationshipId(instance, "checklist-item");
+  const statusId = getRelationshipId(instance, "status");
+  const signedByUserId = getRelationshipId(instance, "signed-by-user");
+  const snapshotId = getRelationshipId(instance, "checklist-snapshot");
   const objectId = pickFirstDefined(
     getRelationshipId(instance, "object"),
     attrs.object,
@@ -1021,6 +1038,7 @@ function parseChecklistItemInstance(instance, includedIndex) {
     ),
     status: pickFirstDefined(
       statusRecord?.attributes?.name,
+      statusId,
       statusRecord?.id,
       attrs.status,
       attrs["status-name"],
@@ -1029,6 +1047,7 @@ function parseChecklistItemInstance(instance, includedIndex) {
       signedByUser?.attributes?.name,
       signedByUser?.attributes?.fullName,
       signedByUser?.attributes?.email,
+      signedByUserId,
       attrs["signed-by-user"],
       attrs.signedByUser,
     ),
@@ -1047,7 +1066,7 @@ function parseChecklistItemInstance(instance, includedIndex) {
       snapshotAttrs.startDate,
       snapshotAttrs["creation-date"],
     ),
-    snapshotId: snapshotRecord?.id || "",
+    snapshotId: snapshotRecord?.id || snapshotId || "",
     snapshotLabel: pickFirstDefined(
       snapshotAttrs.name,
       snapshotAttrs.title,
@@ -1125,7 +1144,7 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
       continue;
     }
 
-    const groupKey = [checklist.id, item.objectId || "", item.snapshotId || "", item.checklistItemId || item.id].join("|");
+    const groupKey = [checklist.id, item.objectId || "", item.snapshotId || "", item.id].join("|");
     if (!groups.has(groupKey)) {
       groups.set(groupKey, {
         topicId: "",
@@ -1138,21 +1157,21 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
         createdLabel: formatDate(item.createdAt),
         workflow: "Checklist-instans",
         signatures: [],
-        url: buildChecklistItemUrl(checklist.id, item.objectId, item.checklistItemId || item.id, item.snapshotId),
+        url: buildChecklistItemUrl(checklist.id, item.objectId, item.id, item.snapshotId),
         objectId: item.objectId,
-        itemId: item.checklistItemId || item.id,
+        itemId: item.id,
         snapshotId: item.snapshotId,
         matchedItem: item,
       });
     }
 
     const group = groups.get(groupKey);
-      group.signatures.push(...signatures);
+    group.signatures.push(...signatures);
     if (!group.createdAt && item.createdAt) {
       group.createdAt = item.createdAt;
       group.createdLabel = formatDate(item.createdAt);
     }
-    group.url = buildChecklistItemUrl(checklist.id, item.objectId, item.checklistItemId || item.id, item.snapshotId);
+    group.url = buildChecklistItemUrl(checklist.id, item.objectId, item.id, item.snapshotId);
   }
 
   if (!matchedItems.length && records.length) {
