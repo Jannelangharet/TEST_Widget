@@ -379,6 +379,129 @@ function normalizeWhitespace(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+function encodeBase64Unicode(value) {
+  return btoa(unescape(encodeURIComponent(String(value))));
+}
+
+function buildChecklistUrl(checklistId, objectId = "") {
+  let url = `https://app.streambim.com/webapp/default/#/viewer/checklists/checklist/${encodeURIComponent(checklistId)}`;
+  if (objectId) {
+    url += `/object/${encodeURIComponent(objectId)}`;
+  }
+  url += `?apply=false&projectId=${encodeURIComponent(state.projectId)}`;
+  return url;
+}
+
+function matchesSignatureLabel(value) {
+  return normalizeWhitespace(value).toLowerCase().includes("33. signatur");
+}
+
+function isDoneStatus(status) {
+  if (!status) {
+    return false;
+  }
+
+  if (typeof status === "string") {
+    return status.toLowerCase() === "done";
+  }
+
+  if (typeof status === "object") {
+    return Boolean(
+      status.done ||
+        status.isDone ||
+        status.value === "done" ||
+        status.name === "done" ||
+        status.id === "done" ||
+        status.status === "done",
+    );
+  }
+
+  return false;
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => normalizeWhitespace(value)).filter(Boolean))];
+}
+
+function collectSignatureValues(value) {
+  return uniqueStrings(
+    collectStrings(value).filter((entry) => {
+      const normalized = normalizeWhitespace(entry);
+      if (!normalized) {
+        return false;
+      }
+
+      const lowered = normalized.toLowerCase();
+      return ![
+        "33. signatur",
+        "signature",
+        "signatur",
+        "done",
+        "open",
+        "not started",
+        "in progress",
+      ].includes(lowered);
+    }),
+  );
+}
+
+function pickFirstDefined(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function buildChecklistExportQuery({
+  key,
+  checklistId = "",
+  snapshotId = "all",
+  page = { skip: 0, limit: -1 },
+  sort = { field: "title", descending: false },
+  filters = [],
+  filename = "",
+  format = "json",
+}) {
+  const filter = {};
+
+  if (checklistId) {
+    filter.checklist = checklistId;
+  }
+
+  if (snapshotId) {
+    if (snapshotId === "all") {
+      filter.allSnapshots = true;
+    } else {
+      filter.snapshotId = snapshotId;
+    }
+  }
+
+  for (const item of filters) {
+    if (!item?.key) {
+      continue;
+    }
+    filter[item.key] = item.value;
+  }
+
+  return {
+    key,
+    sort,
+    page,
+    filter,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    format,
+    filename,
+  };
+}
+
+async function fetchChecklistExport(options) {
+  const query = buildChecklistExportQuery(options);
+  const encodedQuery = encodeBase64Unicode(JSON.stringify(query));
+  return fetchJsonViaViewer(`/checklists/export/json/?query=${encodeURIComponent(encodedQuery)}`);
+}
+
 function extractSignatureCandidates(text) {
   const candidates = [];
   const patterns = [
@@ -597,6 +720,213 @@ function buildSignatureEntry(topic, comments) {
   };
 }
 
+async function loadChecklistCatalog() {
+  const payload = await fetchChecklistExport({
+    key: "checklist",
+    page: { skip: 0, limit: 500 },
+    sort: { field: "title", descending: false },
+    filters: [{ key: "isDraft", value: false }],
+  });
+
+  appendLog("checklistkatalog", {
+    count: payload.data?.length || 0,
+    sample: payload.data?.slice(0, 3) || [],
+  });
+
+  return payload.data || [];
+}
+
+async function loadChecklistItemsExport(checklistId) {
+  const payload = await fetchChecklistExport({
+    key: "checklistItem",
+    checklistId,
+    snapshotId: "all",
+    page: { skip: 0, limit: 500 },
+    sort: { field: "title", descending: false },
+  });
+
+  appendLog("checklistitems export", {
+    checklistId,
+    count: payload.data?.length || 0,
+    sample: payload.data?.slice(0, 5) || [],
+  });
+
+  return payload.data || [];
+}
+
+async function loadChecklistObjectsExport(checklistId) {
+  const payload = await fetchChecklistExport({
+    key: "object",
+    checklistId,
+    snapshotId: "all",
+    page: { skip: 0, limit: 2000 },
+    sort: { field: "title", descending: false },
+  });
+
+  appendLog("checklistobject export", {
+    checklistId,
+    count: payload.data?.length || 0,
+    sample: payload.data?.slice(0, 2) || [],
+  });
+
+  return payload.data || [];
+}
+
+function itemLooksLikeSignature(item) {
+  const title = pickFirstDefined(
+    item?.title,
+    item?.name,
+    item?.label,
+    item?.checklistItem?.title,
+    item?.checklistItem?.name,
+  );
+  const inputType = `${pickFirstDefined(
+    item?.inputType,
+    item?._inputType,
+    item?.type,
+    item?.checklistItem?._inputType,
+    item?.checklistItem?.inputType,
+  )}`.toLowerCase();
+
+  return matchesSignatureLabel(title) || inputType === "signature";
+}
+
+function extractSignatureNames(item) {
+  const direct = collectSignatureValues([
+    item?.signedByUser?.name,
+    item?.signedByUser?._name,
+    item?.signedByUser?.fullName,
+    item?.signedByUser?.email,
+    item?.signedByUser,
+    item?.value,
+    item?.displayValue,
+    item?.optionValue,
+    item?.optionText,
+    item?.options,
+    item?.otherValue,
+    item?.checklistItemInstance?.signedByUser,
+    item?.checklistItemInstance?.value,
+    item?.checklistItemInstance?.options,
+  ]);
+
+  if (direct.length) {
+    return direct;
+  }
+
+  return collectSignatureValues(item);
+}
+
+function buildExportSignatureEntries(checklist, objectRows) {
+  const entries = [];
+
+  for (const row of objectRows) {
+    const items = Array.isArray(row?.items) ? row.items : [];
+    const signatureItems = items.filter(itemLooksLikeSignature).filter((item) => {
+      return isDoneStatus(item?.status) || isDoneStatus(item?.checklistItemInstance?.status) || item?.signedByUser;
+    });
+
+    if (!signatureItems.length) {
+      continue;
+    }
+
+    const signatures = uniqueStrings(signatureItems.flatMap(extractSignatureNames));
+    if (!signatures.length) {
+      appendLog("signaturrad utan namn", {
+        checklistId: checklist.id,
+        row,
+        signatureItems,
+      });
+      continue;
+    }
+
+    const objectId = pickFirstDefined(
+      row.objectId,
+      row.object?.id,
+      row.object,
+      row.ifcObjectId,
+    );
+    const createdAt = pickFirstDefined(
+      row.createdAt,
+      row.creationDate,
+      row.startDate,
+      row.closedDate,
+      row.date,
+    );
+    const title = pickFirstDefined(
+      row.title,
+      row.name,
+      checklist.title,
+      `Checklista ${checklist.id}`,
+    );
+
+    entries.push({
+      topicId: "",
+      checklistInstanceId: objectId || checklist.id,
+      title,
+      checklistTitle: checklist.title || title,
+      createdAt,
+      createdLabel: formatDate(createdAt),
+      workflow: "Checklist-export",
+      signatures,
+      url: buildChecklistUrl(checklist.id, objectId),
+    });
+  }
+
+  return entries;
+}
+
+async function loadSignatureEntriesFromChecklistExports() {
+  const checklistCatalog = await loadChecklistCatalog();
+  const entries = [];
+
+  for (const checklist of checklistCatalog) {
+    const checklistId = checklist.id;
+    const checklistTitle = checklist.title || `Checklist ${checklistId}`;
+    elements.checklistStatus.textContent = `Soker signaturer i ${checklistTitle}...`;
+
+    let checklistItems = [];
+    try {
+      checklistItems = await loadChecklistItemsExport(checklistId);
+    } catch (error) {
+      appendLog("checklistitems fel", {
+        checklistId,
+        message: error.message || String(error),
+      });
+      continue;
+    }
+
+    const hasSignatureField = checklistItems.some((item) => matchesSignatureLabel(item?.title || item?.name || ""));
+    if (!hasSignatureField) {
+      continue;
+    }
+
+    appendLog("signaturchecklista hittad", {
+      checklistId,
+      checklistTitle,
+      matchingItems: checklistItems.filter((item) => matchesSignatureLabel(item?.title || item?.name || "")),
+    });
+
+    try {
+      const objectRows = await loadChecklistObjectsExport(checklistId);
+      const checklistEntries = buildExportSignatureEntries(
+        {
+          id: checklistId,
+          title: checklistTitle,
+        },
+        objectRows,
+      );
+      entries.push(...checklistEntries);
+    } catch (error) {
+      appendLog("checklistobject fel", {
+        checklistId,
+        message: error.message || String(error),
+      });
+    }
+  }
+
+  return entries;
+}
+
 function renderSignatureOverview(entries) {
   elements.checklistStatus.textContent = "Laddar checklistor...";
   elements.checklistEmpty.classList.add("hidden");
@@ -764,23 +1094,41 @@ async function loadSignatureOverview() {
       await loadWorkflows();
     }
 
-    const topics = await loadAllTopics();
-    const checklistTopics = topics.filter(isChecklistTopic);
-    appendLog("checklisttopics", { totalTopics: topics.length, checklistTopics: checklistTopics.length });
+    let entries = [];
+    try {
+      entries = await loadSignatureEntriesFromChecklistExports();
+      appendLog("signaturer via export", { count: entries.length });
+    } catch (error) {
+      appendLog("exportvag misslyckades", error.message || String(error));
+    }
 
-    const entries = [];
-    for (const topic of checklistTopics) {
-      const comments = await loadTopicComments(topic.id);
-      const entry = buildSignatureEntry(topic, comments);
-      if (entry) {
-        entries.push(entry);
+    if (!entries.length) {
+      appendLog("fallback", "Byter till topics/comment-sokning eftersom checklist-exporten inte gav nagra signaturer.");
+      const topics = await loadAllTopics();
+      const checklistTopics = topics.filter(isChecklistTopic);
+      appendLog("checklisttopics", { totalTopics: topics.length, checklistTopics: checklistTopics.length });
+
+      for (const topic of checklistTopics) {
+        const comments = await loadTopicComments(topic.id);
+        const entry = buildSignatureEntry(topic, comments);
+        if (entry) {
+          entries.push(entry);
+        }
       }
     }
 
     entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
-    state.signatureEntries = entries;
+    state.signatureEntries = entries.filter(
+      (entry, index, all) =>
+        all.findIndex(
+          (candidate) =>
+            candidate.url === entry.url &&
+            candidate.createdAt === entry.createdAt &&
+            candidate.signatures.join("|") === entry.signatures.join("|"),
+        ) === index,
+    );
 
-    if (!entries.length) {
+    if (!state.signatureEntries.length) {
       elements.checklistEmpty.classList.remove("hidden");
       elements.checklistStatus.textContent =
         "Jag hittade inga checklistinstanser med 33. Signatur i de checklistposter som kunde lasas i projektet.";
@@ -788,7 +1136,7 @@ async function loadSignatureOverview() {
       return;
     }
 
-    renderSignatureOverview(entries);
+    renderSignatureOverview(state.signatureEntries);
   } catch (error) {
     state.signatureEntries = [];
     elements.checklistEmpty.classList.remove("hidden");
