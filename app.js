@@ -1246,6 +1246,35 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
   return entries;
 }
 
+function mergeChecklistInstancePayloads(payloads) {
+  const records = [];
+  const included = [];
+  const seenRecords = new Set();
+  const seenIncluded = new Set();
+
+  payloads.forEach((payload) => {
+    (payload?.data || []).forEach((record) => {
+      const key = `${record?.type || ""}:${record?.id || ""}`;
+      if (seenRecords.has(key)) {
+        return;
+      }
+      seenRecords.add(key);
+      records.push(record);
+    });
+
+    (payload?.included || []).forEach((record) => {
+      const key = `${record?.type || ""}:${record?.id || ""}`;
+      if (seenIncluded.has(key)) {
+        return;
+      }
+      seenIncluded.add(key);
+      included.push(record);
+    });
+  });
+
+  return { data: records, included };
+}
+
 async function loadSignatureEntriesFromChecklistInstances() {
   const checklistCatalog = await loadChecklistCatalog();
   const entries = [];
@@ -1271,38 +1300,32 @@ async function loadSignatureEntriesFromChecklistInstances() {
       const snapshots = await loadChecklistSnapshots(checklistId);
       const snapshotIds = snapshots.map((snapshot) => snapshot.id);
       let checklistEntryCountBefore = entries.length;
-
-      if (!snapshotIds.length) {
-        const payload = await loadChecklistItemInstances(checklistId);
-        const includedIndex = buildIncludedIndex(payload.included || []);
-        entries.push(
-          ...buildInstanceSignatureEntries(
-            {
-              id: checklistId,
-              title: checklistTitle,
-            },
-            payload.data || [],
-            includedIndex,
-            checklistItemLookup,
-          ),
-        );
-      } else {
-        for (const snapshotId of snapshotIds) {
-          const payload = await loadChecklistItemInstances(checklistId, snapshotId);
-          const includedIndex = buildIncludedIndex(payload.included || []);
-          entries.push(
-            ...buildInstanceSignatureEntries(
-              {
-                id: checklistId,
-                title: checklistTitle,
-              },
-              payload.data || [],
-              includedIndex,
-              checklistItemLookup,
-            ),
-          );
-        }
+      const payloads = [];
+      payloads.push(await loadChecklistItemInstances(checklistId));
+      for (const snapshotId of snapshotIds) {
+        payloads.push(await loadChecklistItemInstances(checklistId, snapshotId));
       }
+
+      const mergedPayload = mergeChecklistInstancePayloads(payloads);
+      appendLog("sammanfogade checklistinstanser", {
+        checklistId,
+        checklistTitle,
+        snapshotIds,
+        mergedCount: mergedPayload.data.length,
+      });
+
+      const includedIndex = buildIncludedIndex(mergedPayload.included || []);
+      entries.push(
+        ...buildInstanceSignatureEntries(
+          {
+            id: checklistId,
+            title: checklistTitle,
+          },
+          mergedPayload.data || [],
+          includedIndex,
+          checklistItemLookup,
+        ),
+      );
 
       if (entries.length > checklistEntryCountBefore) {
         appendLog("signaturchecklista hittad", {
@@ -1366,7 +1389,12 @@ function renderSignatureOverview(entries) {
 
     const meta = document.createElement("div");
     meta.className = "checklist-meta";
-    [`Skapad ${entry.createdLabel}`, entry.workflow, entry.checklistInstanceId ? `Checklist ${entry.checklistInstanceId}` : `Topic ${entry.topicId}`]
+    [
+      `Skapad ${entry.createdLabel}`,
+      entry.workflow,
+      entry.objectId ? `Objekt ${entry.objectId}` : "Ej kopplad till objekt",
+      entry.checklistInstanceId ? `Checklist ${entry.checklistInstanceId}` : `Topic ${entry.topicId}`,
+    ]
       .filter(Boolean)
       .forEach((text) => {
         const chip = document.createElement("span");
