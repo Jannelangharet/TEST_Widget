@@ -1412,7 +1412,7 @@ function renderSignatureOverview(entries) {
     [
       `Skapad ${entry.createdLabel}`,
       entry.workflow,
-      entry.objectId ? `Objekt ${entry.objectId}` : "Ej kopplad till objekt",
+      entry.objectId ? `Objektreferens ${entry.objectId}` : "Ingen objektreferens",
       entry.checklistInstanceId ? `Checklist ${entry.checklistInstanceId}` : `Topic ${entry.topicId}`,
     ]
       .filter(Boolean)
