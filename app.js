@@ -1069,15 +1069,45 @@ function parseChecklistItemInstance(instance, includedIndex) {
   };
 }
 
-function buildInstanceSignatureEntries(checklist, records, includedIndex) {
+function buildChecklistItemLookup(items) {
+  const lookup = new Map();
+  for (const item of items) {
+    lookup.set(String(item.id), item);
+  }
+  return lookup;
+}
+
+function mergeChecklistItemData(instanceItem, checklistItemLookup) {
+  const definition = checklistItemLookup.get(String(instanceItem.checklistItemId || ""));
+  if (!definition) {
+    return instanceItem;
+  }
+
+  return {
+    ...instanceItem,
+    title: pickFirstDefined(instanceItem.title, definition.title, definition.name),
+    name: pickFirstDefined(instanceItem.name, definition.name, definition.title),
+    inputType: pickFirstDefined(instanceItem.inputType, definition.inputType),
+    number: pickFirstDefined(instanceItem.number, definition.number),
+    raw: {
+      definition: definition.raw || {},
+      ...(instanceItem.raw || {}),
+    },
+  };
+}
+
+function buildInstanceSignatureEntries(checklist, records, includedIndex, checklistItemLookup) {
   const entries = [];
   const groups = new Map();
+  const matchedItems = [];
 
   for (const record of records) {
-    const item = parseChecklistItemInstance(record, includedIndex);
+    const item = mergeChecklistItemData(parseChecklistItemInstance(record, includedIndex), checklistItemLookup);
     if (!itemLooksLikeSignature(item)) {
       continue;
     }
+
+    matchedItems.push(item);
 
     if (!isDoneStatus(item.status) && !item.signedByUser) {
       continue;
@@ -1113,12 +1143,21 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex) {
     }
 
     const group = groups.get(groupKey);
-    group.signatures.push(...signatures);
+      group.signatures.push(...signatures);
     if (!group.createdAt && item.createdAt) {
       group.createdAt = item.createdAt;
       group.createdLabel = formatDate(item.createdAt);
     }
     group.url = buildChecklistItemUrl(checklist.id, item.objectId, item.checklistItemId || item.id, item.snapshotId);
+  }
+
+  if (!matchedItems.length && records.length) {
+    appendLog("inga matchande instansitems", {
+      checklistId: checklist.id,
+      sampleParsedItems: records.slice(0, 8).map((record) =>
+        mergeChecklistItemData(parseChecklistItemInstance(record, includedIndex), checklistItemLookup),
+      ),
+    });
   }
 
   for (const entry of groups.values()) {
@@ -1138,6 +1177,18 @@ async function loadSignatureEntriesFromChecklistInstances() {
     const checklistTitle = checklist.title || `Checklist ${checklistId}`;
     elements.checklistStatus.textContent = `Soker signaturer i ${checklistTitle}...`;
 
+    let checklistItems = [];
+    try {
+      checklistItems = await loadChecklistItems(checklistId);
+    } catch (error) {
+      appendLog("checklistitems fel", {
+        checklistId,
+        message: error.message || String(error),
+      });
+      continue;
+    }
+    const checklistItemLookup = buildChecklistItemLookup(checklistItems);
+
     try {
       const snapshots = await loadChecklistSnapshots(checklistId);
       const snapshotIds = snapshots.map((snapshot) => snapshot.id);
@@ -1154,6 +1205,7 @@ async function loadSignatureEntriesFromChecklistInstances() {
             },
             payload.data || [],
             includedIndex,
+            checklistItemLookup,
           ),
         );
       } else {
@@ -1168,6 +1220,7 @@ async function loadSignatureEntriesFromChecklistInstances() {
               },
               payload.data || [],
               includedIndex,
+              checklistItemLookup,
             ),
           );
         }
