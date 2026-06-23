@@ -22,6 +22,12 @@ const CHECKLIST_STATUS_IDS = {
   notRelevant: "4500",
 };
 
+const TARGET_SIGNATURE_DEBUG = {
+  checklistId: "14",
+  snapshotId: "3",
+  itemInstanceId: "1897",
+};
+
 const elements = {
   connectionBadge: document.getElementById("connection-badge"),
   selectionBadge: document.getElementById("selection-badge"),
@@ -958,6 +964,19 @@ async function loadChecklistItemInstances(checklistId, snapshotId = "") {
     included: payload.included?.slice(0, 5) || [],
   });
 
+  if (
+    String(checklistId) === TARGET_SIGNATURE_DEBUG.checklistId &&
+    String(snapshotId || "") === TARGET_SIGNATURE_DEBUG.snapshotId
+  ) {
+    const targetRecord = (payload.data || []).find((record) => String(record?.id || "") === TARGET_SIGNATURE_DEBUG.itemInstanceId);
+    appendLog("target signaturpost api", {
+      checklistId,
+      snapshotId,
+      found: Boolean(targetRecord),
+      targetRecord: targetRecord || null,
+    });
+  }
+
   return payload;
 }
 
@@ -1124,13 +1143,42 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
 
   for (const record of records) {
     const item = mergeChecklistItemData(parseChecklistItemInstance(record, includedIndex), checklistItemLookup);
+    const isTargetRecord =
+      String(checklist.id) === TARGET_SIGNATURE_DEBUG.checklistId &&
+      String(item.snapshotId || "") === TARGET_SIGNATURE_DEBUG.snapshotId &&
+      String(item.id || "") === TARGET_SIGNATURE_DEBUG.itemInstanceId;
+
+    if (isTargetRecord) {
+      appendLog("target signaturpost tolkad", {
+        checklistId: checklist.id,
+        parsedItem: item,
+        looksLikeSignature: itemLooksLikeSignature(item),
+        isDoneStatus: isDoneStatus(item.status),
+        signatures: extractSignatureNames(item),
+      });
+    }
+
     if (!itemLooksLikeSignature(item)) {
+      if (isTargetRecord) {
+        appendLog("target signaturpost bortfiltrerad", {
+          reason: "itemLooksLikeSignature=false",
+          checklistId: checklist.id,
+          item,
+        });
+      }
       continue;
     }
 
     matchedItems.push(item);
 
     if (!isDoneStatus(item.status) && !item.signedByUser) {
+      if (isTargetRecord) {
+        appendLog("target signaturpost bortfiltrerad", {
+          reason: "varken done-status eller signedByUser",
+          checklistId: checklist.id,
+          item,
+        });
+      }
       continue;
     }
 
@@ -1186,6 +1234,13 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
   for (const entry of groups.values()) {
     entry.signatures = uniqueStrings(entry.signatures);
     entries.push(entry);
+  }
+
+  if (String(checklist.id) === TARGET_SIGNATURE_DEBUG.checklistId) {
+    const targetEntry = entries.find((entry) => String(entry.itemId || "") === TARGET_SIGNATURE_DEBUG.itemInstanceId);
+    if (targetEntry) {
+      appendLog("target signaturpost sammanstallning", targetEntry);
+    }
   }
 
   return entries;
