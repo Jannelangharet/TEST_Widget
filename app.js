@@ -466,7 +466,7 @@ function pickFirstDefined(...values) {
 function buildChecklistExportQuery({
   key,
   checklistId = "",
-  snapshotId = "all",
+  snapshotId = "",
   page = { skip: 0, limit: -1 },
   sort = { field: "title", descending: false },
   filters = [],
@@ -481,7 +481,9 @@ function buildChecklistExportQuery({
 
   if (snapshotId) {
     if (snapshotId === "all") {
-      filter.allSnapshots = true;
+      if (checklistId) {
+        filter.allSnapshots = true;
+      }
     } else {
       filter.snapshotId = snapshotId;
     }
