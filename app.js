@@ -856,6 +856,7 @@ async function loadChecklistCatalog() {
       record.attributes?.["last-name-segment"] ||
       `Checklist ${record.id}`,
     raw: record.attributes || {},
+    rawRelationships: record.relationships || {},
   }));
 }
 
@@ -1157,7 +1158,43 @@ function mergeChecklistItemData(instanceItem, checklistItemLookup) {
   };
 }
 
-function buildInstanceSignatureEntries(checklist, records, includedIndex, checklistItemLookup) {
+function inferChecklistClassification(checklist, checklistItems, item) {
+  const checklistRaw = checklist?.raw || {};
+  const rawFlags = [
+    checklistRaw.groupBy,
+    checklistRaw["group-by"],
+    checklistRaw.onWagon,
+    checklistRaw["on-wagon"],
+    checklistRaw.handoverFor,
+    checklistRaw["handover-for"],
+    checklistRaw.objectProperty,
+    checklistRaw["object-property"],
+  ]
+    .map((value) => normalizeWhitespace(value))
+    .filter(Boolean);
+
+  const hasItemObjectProperty = checklistItems.some((checklistItem) =>
+    Boolean(
+      normalizeWhitespace(
+        checklistItem?.raw?.["object-property"] ||
+          checklistItem?.raw?.objectProperty ||
+          "",
+      ),
+    ),
+  );
+
+  if (rawFlags.length || hasItemObjectProperty) {
+    return "Objektbunden checklista";
+  }
+
+  if (item?.objectId) {
+    return "Fristaende checklista";
+  }
+
+  return "Fristaende checklista";
+}
+
+function buildInstanceSignatureEntries(checklist, records, includedIndex, checklistItemLookup, checklistItems) {
   const entries = [];
   const groups = new Map();
   const matchedItems = [];
@@ -1221,6 +1258,7 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
         title: checklist.title || `Checklista ${checklist.id}`,
         signatureLabel: pickFirstDefined(item.name, item.title, "Signatur"),
         checklistTitle: checklist.title || `Checklista ${checklist.id}`,
+        checklistClassification: inferChecklistClassification(checklist, checklistItems, item),
         createdAt: item.createdAt,
         createdLabel: formatDate(item.createdAt),
         workflow: "Checklist-instans",
@@ -1340,10 +1378,13 @@ async function loadSignatureEntriesFromChecklistInstances() {
           {
             id: checklistId,
             title: checklistTitle,
+            raw: checklist.raw,
+            rawRelationships: checklist.rawRelationships,
           },
           mergedPayload.data || [],
           includedIndex,
           checklistItemLookup,
+          checklistItems,
         ),
       );
 
@@ -1412,6 +1453,7 @@ function renderSignatureOverview(entries) {
     [
       `Skapad ${entry.createdLabel}`,
       entry.workflow,
+      entry.checklistClassification,
       entry.objectId ? `Objektreferens ${entry.objectId}` : "Ingen objektreferens",
       entry.checklistInstanceId ? `Checklist ${entry.checklistInstanceId}` : `Topic ${entry.topicId}`,
     ]
