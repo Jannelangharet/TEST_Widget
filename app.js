@@ -522,6 +522,9 @@ function collectSignatureValues(value) {
       }
 
       const lowered = normalized.toLowerCase();
+      if (/^[A-Za-z0-9_$:+-]{10,}$/.test(normalized) && !normalized.includes("@")) {
+        return false;
+      }
       return ![
         "33. signatur",
         "signature",
@@ -993,6 +996,25 @@ function itemLooksLikeSignature(item) {
 }
 
 function extractSignatureNames(item) {
+  const inputType = `${pickFirstDefined(item?.inputType, item?._inputType, item?.type)}`.toLowerCase();
+  if (inputType === "signature") {
+    const signatureOnly = collectSignatureValues([
+      item?.signedByUser?.name,
+      item?.signedByUser?._name,
+      item?.signedByUser?.fullName,
+      item?.signedByUser?.email,
+      item?.signedByUser,
+      item?.options,
+      item?.optionText,
+      item?.optionValue,
+      item?.displayValue,
+    ]);
+
+    if (signatureOnly.length) {
+      return signatureOnly;
+    }
+  }
+
   const direct = collectSignatureValues([
     item?.signedByUser?.name,
     item?.signedByUser?._name,
@@ -1006,7 +1028,6 @@ function extractSignatureNames(item) {
     item?.options,
     item?.otherValue,
     item?.checklistItemInstance?.signedByUser,
-    item?.checklistItemInstance?.value,
     item?.checklistItemInstance?.options,
   ]);
 
@@ -1197,9 +1218,8 @@ function buildInstanceSignatureEntries(checklist, records, includedIndex, checkl
       groups.set(groupKey, {
         topicId: "",
         checklistInstanceId: item.id,
-        title:
-          pickFirstDefined(item.title, item.name) ||
-          `${checklist.title || `Checklista ${checklist.id}`} - signatur`,
+        title: checklist.title || `Checklista ${checklist.id}`,
+        signatureLabel: pickFirstDefined(item.name, item.title, "Signatur"),
         checklistTitle: checklist.title || `Checklista ${checklist.id}`,
         createdAt: item.createdAt,
         createdLabel: formatDate(item.createdAt),
@@ -1411,7 +1431,7 @@ function renderSignatureOverview(entries) {
 
       const label = document.createElement("span");
       label.className = "signature-label";
-      label.textContent = entry.title || "Signatur";
+      label.textContent = entry.signatureLabel || "Signatur";
       signatureBlock.appendChild(label);
 
       const link = document.createElement("a");
