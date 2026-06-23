@@ -6,6 +6,7 @@ const state = {
   buildingId: "",
   userEmail: "",
   workflows: new Map(),
+  signatureEntries: [],
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -30,6 +31,7 @@ const elements = {
   highlightObject: document.getElementById("highlight-object"),
   copyGuid: document.getElementById("copy-guid"),
   loadChecklists: document.getElementById("load-checklists"),
+  exportPdf: document.getElementById("export-pdf"),
   checklistEmpty: document.getElementById("checklist-empty"),
   checklistStatus: document.getElementById("checklist-status"),
   checklistRoot: document.getElementById("checklist-root"),
@@ -133,7 +135,6 @@ function setSelectionState(message, active) {
   elements.gotoObject.disabled = !hasSelection;
   elements.highlightObject.disabled = !hasSelection;
   elements.copyGuid.disabled = !hasSelection;
-  elements.loadChecklists.disabled = !hasSelection;
   elements.selectedGuid.textContent = state.selectedGuid || "-";
 }
 
@@ -351,6 +352,89 @@ function isChecklistTopic(topic) {
   return topicType.includes("checklist") || channel.includes("checklist");
 }
 
+function collectStrings(value, bucket = []) {
+  if (value === null || value === undefined) {
+    return bucket;
+  }
+
+  if (typeof value === "string") {
+    bucket.push(value);
+    return bucket;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStrings(item, bucket));
+    return bucket;
+  }
+
+  if (typeof value === "object") {
+    Object.values(value).forEach((item) => collectStrings(item, bucket));
+  }
+
+  return bucket;
+}
+
+function normalizeWhitespace(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function extractSignatureCandidates(text) {
+  const candidates = [];
+  const patterns = [
+    /33\.\s*Signatur\s*[:\-]\s*([^\n\r;|]+)/gi,
+    /33\.\s*Signatur\s*"\s*[:\-]\s*"([^"]+)"/gi,
+    /33\.\s*Signatur\s*\n+\s*([^\n\r]+)/gi,
+    /33\.\s*Signatur\s*\r?\n\s*([^\n\r]+)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match = pattern.exec(text);
+    while (match) {
+      const value = normalizeWhitespace(match[1]);
+      if (value && !/^33\.\s*Signatur$/i.test(value)) {
+        candidates.push(value);
+      }
+      match = pattern.exec(text);
+    }
+  }
+
+  if (!candidates.length && /33\.\s*Signatur/i.test(text)) {
+    const compact = normalizeWhitespace(text);
+    const index = compact.toLowerCase().indexOf("33. signatur");
+    if (index !== -1) {
+      const tail = compact.slice(index + "33. Signatur".length).replace(/^[:\-\s]+/, "");
+      if (tail) {
+        candidates.push(tail.slice(0, 120));
+      }
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
+function buildTopicDetailUrl(topicId) {
+  return `https://app.streambim.com/webapp/default/#/viewer/topics/detail/${topicId}?projectId=${encodeURIComponent(state.projectId)}`;
+}
+
+function formatDate(value) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("sv-SE", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 async function loadWorkflows() {
   if (!state.projectId) {
     await loadProjectContext();
@@ -466,15 +550,209 @@ function normalizeChecklistCard(topic, comments) {
   };
 }
 
-async function loadChecklistsForSelection() {
-  if (!state.selectedGuid) {
-    return;
+async function loadAllTopics() {
+  const limit = 200;
+  const topics = [];
+  let skip = 0;
+
+  while (true) {
+    const payload = await fetchJsonViaViewer(
+      `/project-${state.projectId}/api/v1/v2/topics?page[limit]=${limit}&page[skip]=${skip}`,
+    );
+    const chunk = payload.data || [];
+    topics.push(...chunk);
+    appendLog("topics page", { skip, fetched: chunk.length, total: topics.length });
+    if (chunk.length < limit) {
+      break;
+    }
+    skip += limit;
   }
 
+  return topics;
+}
+
+function buildSignatureEntry(topic, comments) {
+  const attrs = topic.attributes || {};
+  const strings = collectStrings(attrs).concat(comments.map((comment) => comment.attributes?.comment || ""));
+  const signatureHits = strings.flatMap((text) => extractSignatureCandidates(String(text)));
+
+  if (!signatureHits.length) {
+    return null;
+  }
+
+  const workflowId = topic.relationships?.workflow?.data?.id;
+  const checklistInstanceId = topic.relationships?.["checklist-item-instance"]?.data?.id || "";
+  const createdAt = attrs["creation-date"] || "";
+
+  return {
+    topicId: topic.id,
+    checklistInstanceId,
+    title: attrs.title || attrs["teaser-text"] || `Checklist ${topic.id}`,
+    createdAt,
+    createdLabel: formatDate(createdAt),
+    workflow: state.workflows.get(workflowId) || workflowId || "Okant workflow",
+    signatures: [...new Set(signatureHits)],
+    url: buildTopicDetailUrl(topic.id),
+  };
+}
+
+function renderSignatureOverview(entries) {
   elements.checklistStatus.textContent = "Laddar checklistor...";
   elements.checklistEmpty.classList.add("hidden");
   elements.checklistRoot.classList.add("hidden");
   elements.checklistRoot.innerHTML = "";
+
+  const summary = document.createElement("section");
+  summary.className = "checklist-summary";
+  const signatureCount = entries.reduce((sum, entry) => sum + entry.signatures.length, 0);
+  [
+    { value: entries.length, label: "checklistor med 33. Signatur" },
+    { value: signatureCount, label: "signaturvarder hittade" },
+    { value: entries[0]?.createdLabel || "-", label: "senaste skapad" },
+  ].forEach((item) => {
+    const tile = document.createElement("article");
+    tile.className = "summary-tile";
+    tile.innerHTML = `<strong>${item.value}</strong><span>${item.label}</span>`;
+    summary.appendChild(tile);
+  });
+  elements.checklistRoot.appendChild(summary);
+
+  entries.forEach((entry) => {
+    const card = document.createElement("article");
+    card.className = "checklist-card";
+
+    const header = document.createElement("div");
+    header.className = "checklist-header";
+
+    const titleLink = document.createElement("a");
+    titleLink.className = "checklist-title-link";
+    titleLink.href = entry.url;
+    titleLink.target = "_blank";
+    titleLink.rel = "noreferrer";
+    titleLink.innerHTML = `<h3>${entry.title}</h3>`;
+    header.appendChild(titleLink);
+
+    const meta = document.createElement("div");
+    meta.className = "checklist-meta";
+    [`Skapad ${entry.createdLabel}`, entry.workflow, entry.checklistInstanceId ? `Checklist ${entry.checklistInstanceId}` : `Topic ${entry.topicId}`]
+      .filter(Boolean)
+      .forEach((text) => {
+        const chip = document.createElement("span");
+        chip.className = "meta-chip";
+        chip.textContent = text;
+        meta.appendChild(chip);
+      });
+    header.appendChild(meta);
+    card.appendChild(header);
+
+    entry.signatures.forEach((signature) => {
+      const signatureBlock = document.createElement("div");
+      signatureBlock.className = "signature-block";
+
+      const label = document.createElement("span");
+      label.className = "signature-label";
+      label.textContent = "33. Signatur";
+      signatureBlock.appendChild(label);
+
+      const link = document.createElement("a");
+      link.className = "signature-link";
+      link.href = entry.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = signature;
+      signatureBlock.appendChild(link);
+
+      card.appendChild(signatureBlock);
+    });
+
+    const footer = document.createElement("div");
+    footer.className = "checklist-footer";
+    const helper = document.createElement("span");
+    helper.className = "helper-text";
+    helper.textContent = "Klicka pa signaturen eller checklistans namn for att oppna posten direkt i StreamBIM.";
+    footer.appendChild(helper);
+
+    const openLink = document.createElement("a");
+    openLink.href = entry.url;
+    openLink.target = "_blank";
+    openLink.rel = "noreferrer";
+    openLink.textContent = "Oppna i StreamBIM";
+    footer.appendChild(openLink);
+    card.appendChild(footer);
+
+    elements.checklistRoot.appendChild(card);
+  });
+
+  elements.checklistRoot.classList.remove("hidden");
+  elements.checklistStatus.textContent = `Hittade ${entries.length} checklistor som innehaller faltet 33. Signatur.`;
+  elements.exportPdf.disabled = !entries.length;
+}
+
+function openPdfReport() {
+  if (!state.signatureEntries.length) {
+    return;
+  }
+
+  const rows = state.signatureEntries
+    .map(
+      (entry) => `
+        <tr>
+          <td>${entry.title}</td>
+          <td>${entry.createdLabel}</td>
+          <td>${entry.signatures.join("<br/>")}</td>
+          <td><a href="${entry.url}">${entry.url}</a></td>
+        </tr>`,
+    )
+    .join("");
+
+  const reportWindow = window.open("", "_blank", "width=1100,height=800");
+  if (!reportWindow) {
+    showError("Webblasaren blockerade rapportfonstret.");
+    return;
+  }
+
+  reportWindow.document.write(`<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <title>Signaturrapport - StreamBIM</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 32px; color: #1f1a14; }
+      h1 { margin: 0 0 8px; }
+      p { margin: 0 0 18px; color: #5b5247; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 10px 12px; border: 1px solid #d9cfbf; text-align: left; vertical-align: top; }
+      th { background: #f6eee4; }
+      a { color: #a84b1a; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <h1>Signaturrapport</h1>
+    <p>Projekt ${state.projectId} | Genererad ${formatDate(new Date().toISOString())} | Endast checklistor som innehaller 33. Signatur.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Checklista</th>
+          <th>Skapad</th>
+          <th>33. Signatur</th>
+          <th>Lank</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </body>
+</html>`);
+  reportWindow.document.close();
+  reportWindow.focus();
+  reportWindow.print();
+}
+
+async function loadSignatureOverview() {
+  elements.checklistStatus.textContent = "Laddar signaturoversikt...";
+  elements.checklistEmpty.classList.add("hidden");
+  elements.checklistRoot.classList.add("hidden");
+  elements.checklistRoot.innerHTML = "";
+  elements.exportPdf.disabled = true;
 
   try {
     if (!state.projectId) {
@@ -484,45 +762,37 @@ async function loadChecklistsForSelection() {
       await loadWorkflows();
     }
 
-    const topicsPayload = await fetchJsonViaViewer(
-      `/project-${state.projectId}/api/v1/v2/topics?page[limit]=200&page[skip]=0`,
-    );
-    const topics = topicsPayload.data || [];
-    appendLog("topics laddade", { count: topics.length });
+    const topics = await loadAllTopics();
+    const checklistTopics = topics.filter(isChecklistTopic);
+    appendLog("checklisttopics", { totalTopics: topics.length, checklistTopics: checklistTopics.length });
 
-    const objectChecklistTopics = topics.filter(
-      (topic) => isChecklistTopic(topic) && topicMatchesSelectedObject(topic, state.selectedGuid),
-    );
-
-    let topicsToRender = objectChecklistTopics;
-    let mode = "object";
-
-    if (!topicsToRender.length) {
-      topicsToRender = topics.filter(isChecklistTopic).slice(0, 10);
-      mode = "recent";
-    }
-
-    const cards = [];
-    for (const topic of topicsToRender) {
+    const entries = [];
+    for (const topic of checklistTopics) {
       const comments = await loadTopicComments(topic.id);
-      cards.push(normalizeChecklistCard(topic, comments));
+      const entry = buildSignatureEntry(topic, comments);
+      if (entry) {
+        entries.push(entry);
+      }
     }
 
-    if (!cards.length) {
+    entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+    state.signatureEntries = entries;
+
+    if (!entries.length) {
       elements.checklistEmpty.classList.remove("hidden");
-      elements.checklistRoot.classList.add("hidden");
       elements.checklistStatus.textContent =
-        "Jag hittade inga checklistrelaterade poster i de forsta 200 topicsen for projektet.";
+        "Jag hittade inga checklistinstanser med 33. Signatur i de checklistposter som kunde lasas i projektet.";
       return;
     }
 
-    renderChecklistCards(cards, mode);
+    renderSignatureOverview(entries);
   } catch (error) {
+    state.signatureEntries = [];
     elements.checklistEmpty.classList.remove("hidden");
     elements.checklistRoot.classList.add("hidden");
-    showError(`Kunde inte lasa checklistor: ${error.message || error}`);
+    showError(`Kunde inte lasa signaturoversikten: ${error.message || error}`);
     elements.checklistStatus.textContent =
-      "Checklistladdningen misslyckades. Se debug-loggen for exakt API-svar.";
+      "Signaturoversikten misslyckades. Se debug-loggen for exakt API-svar.";
   }
 }
 
@@ -538,10 +808,6 @@ async function handlePickedObject(result) {
   state.selectedGuid = guid;
   setSelectionState(`Valt objekt: ${guid}`, true);
   elements.actionFeedback.textContent = "Laddar objektinformation...";
-  elements.checklistStatus.textContent = "Objekt valt. Klicka pa Hamta checklistor for att lasa checklistdata.";
-  elements.checklistEmpty.classList.remove("hidden");
-  elements.checklistRoot.classList.add("hidden");
-  elements.checklistRoot.innerHTML = "";
 
   try {
     const info = await callApi("getObjectInfo", guid);
@@ -656,8 +922,13 @@ elements.copyGuid.addEventListener("click", async () => {
 });
 
 elements.loadChecklists.addEventListener("click", async () => {
-  appendLog("Manuell handling", `Hamta checklistor for ${state.selectedGuid}`);
-  await loadChecklistsForSelection();
+  appendLog("Manuell handling", "Hamta signaturoversikt");
+  await loadSignatureOverview();
+});
+
+elements.exportPdf.addEventListener("click", () => {
+  appendLog("Manuell handling", "Skapa PDF-rapport");
+  openPdfReport();
 });
 
 elements.clearLog.addEventListener("click", () => {

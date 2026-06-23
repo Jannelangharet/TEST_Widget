@@ -243,6 +243,35 @@ button:disabled {
   gap: 14px;
 }
 
+.checklist-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.summary-tile {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-strong);
+}
+
+.summary-tile strong,
+.summary-tile span {
+  display: block;
+}
+
+.summary-tile strong {
+  font-size: 1.4rem;
+}
+
+.summary-tile span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .checklist-card {
   padding: 18px;
   border: 1px solid var(--line);
@@ -277,6 +306,67 @@ button:disabled {
 .checklist-copy {
   margin: 0;
   color: var(--muted);
+}
+
+.checklist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.checklist-title-link {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.checklist-title-link:hover {
+  color: var(--accent-strong);
+}
+
+.signature-block {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(214, 106, 49, 0.08);
+  border: 1px solid rgba(214, 106, 49, 0.18);
+  margin: 14px 0;
+}
+
+.signature-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+}
+
+.signature-link {
+  color: var(--accent-strong);
+  font-weight: 700;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.signature-link:hover {
+  text-decoration: underline;
+}
+
+.checklist-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.checklist-footer a {
+  color: var(--accent-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.checklist-footer a:hover {
+  text-decoration: underline;
 }
 
 .comment-list {
@@ -395,6 +485,12 @@ button:disabled {
   .panel-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .checklist-header,
+  .checklist-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .property-key,

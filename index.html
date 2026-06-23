@@ -81,12 +81,15 @@
 
       <section class="panel">
         <div class="panel-heading">
-          <h2>Checklistor</h2>
-          <button id="load-checklists" class="ghost-button" type="button" disabled>Hamta checklistor</button>
+          <h2>Signaturoversikt</h2>
+          <div class="button-row">
+            <button id="load-checklists" class="ghost-button" type="button">Hamta signaturer</button>
+            <button id="export-pdf" class="ghost-button" type="button" disabled>Skapa PDF-rapport</button>
+          </div>
         </div>
         <div id="checklist-empty" class="empty-state">
-          <p>Inga checklistor laddade an.</p>
-          <p class="helper-text">Valj ett objekt och klicka sedan pa knappen for att hamta checklistposter och kommentarer via StreamBIMs projekt-API.</p>
+          <p>Ingen signaturoversikt laddad an.</p>
+          <p class="helper-text">Widgeten letar efter alla checklistinstanser som innehaller faltet 33. Signatur och bygger en projektoversikt med checklistans namn, skapad datum och signaturen.</p>
         </div>
         <div id="checklist-status" class="helper-text"></div>
         <div id="checklist-root" class="checklist-root hidden"></div>
