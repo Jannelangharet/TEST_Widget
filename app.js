@@ -167,7 +167,7 @@ function setConnectionState(connected, message) {
   elements.loadChecklists.disabled = !connected;
   elements.loadTopicMap.disabled = !connected;
   elements.refreshSpaceTopics.disabled = !connected;
-  elements.openSpaceTopics.disabled = !connected || !state.currentSpaceGuids.length;
+  elements.openSpaceTopics.disabled = !connected;
 }
 
 function setSelectionState(message, active) {
@@ -405,6 +405,21 @@ function readTopicObjectGuid(topic) {
     attrs["object-guid"] ||
     ""
   );
+}
+
+function readRelationshipIds(record, relationshipName) {
+  const items = record?.relationships?.[relationshipName]?.data;
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .map((item) => String(item?.id || "").trim())
+    .filter(Boolean);
+}
+
+function mergeUniqueStrings(...groups) {
+  return [...new Set(groups.flat().map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function topicMatchesSelectedObject(topic, guid) {
@@ -958,14 +973,11 @@ function getViewpointPlanPoint(viewpoint) {
 }
 
 function getViewpointSpaceIds(viewpoint) {
-  const spaces = viewpoint?.relationships?.spaces?.data;
-  if (!Array.isArray(spaces)) {
-    return [];
-  }
+  return readRelationshipIds(viewpoint, "spaces");
+}
 
-  return spaces
-    .map((space) => String(space?.id || "").trim())
-    .filter(Boolean);
+function getTopicSpaceIds(topic) {
+  return readRelationshipIds(topic, "spaces");
 }
 
 function getMapMarkerTopicId(marker) {
@@ -1107,7 +1119,7 @@ async function loadTopicMapEntries(floors) {
       const mapPoint = getViewpointPlanPoint(viewpoint);
       const objectGuid = readTopicObjectGuid(topic) || getViewpointSelectionGuid(viewpoint);
       const floorId = findClosestFloorId(cameraY, floors);
-      const spaceIds = getViewpointSpaceIds(viewpoint);
+      const spaceIds = mergeUniqueStrings(getTopicSpaceIds(topic), getViewpointSpaceIds(viewpoint));
 
       entries.push({
         id: String(topic.id),
@@ -1324,7 +1336,7 @@ async function updateCurrentSpaceLabels(spaceGuids) {
 
 async function syncCurrentSpaceTopics() {
   const currentSpaces = state.currentSpaceGuids.filter(Boolean);
-  elements.openSpaceTopics.disabled = !currentSpaces.length;
+  elements.openSpaceTopics.disabled = !state.connected;
 
   if (!currentSpaces.length) {
     state.currentSpaceTopicEntries = [];
@@ -1360,6 +1372,17 @@ async function syncCurrentSpaceTopics() {
   const entries = state.topicMapEntries.filter((entry) => {
     const spaceIds = Array.isArray(entry.spaceIds) ? entry.spaceIds : [];
     return spaceIds.some((spaceId) => currentSpaces.includes(String(spaceId)));
+  });
+
+  appendLog("space-match debug", {
+    currentSpaces,
+    matchedTopics: entries.length,
+    sampleTopics: state.topicMapEntries.slice(0, 8).map((entry) => ({
+      id: entry.id,
+      publicId: entry.publicId,
+      title: entry.title,
+      spaceIds: entry.spaceIds || [],
+    })),
   });
 
   state.currentSpaceTopicEntries = entries;
@@ -1437,6 +1460,7 @@ async function createSpaceTopicFilter(spaceGuid) {
         name: `[Widget space] ${spaceName}`,
         key: "spaces",
         value: spaceGuid,
+        recordName: spaceName,
         section: 0,
       },
     },
