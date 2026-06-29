@@ -64,6 +64,12 @@ const elements = {
   spaceTopicsRoot: document.getElementById("space-topics-root"),
   spaceTopicsSummary: document.getElementById("space-topics-summary"),
   spaceTopicsList: document.getElementById("space-topics-list"),
+  openEmbeddedTopics: document.getElementById("open-embedded-topics"),
+  reloadEmbeddedTopics: document.getElementById("reload-embedded-topics"),
+  embeddedTopicsEmpty: document.getElementById("embedded-topics-empty"),
+  embeddedTopicsStatus: document.getElementById("embedded-topics-status"),
+  embeddedTopicsRoot: document.getElementById("embedded-topics-root"),
+  embeddedTopicsFrame: document.getElementById("embedded-topics-frame"),
   loadTopicMap: document.getElementById("load-topic-map"),
   topicMapEmpty: document.getElementById("topic-map-empty"),
   topicMapStatus: document.getElementById("topic-map-status"),
@@ -168,6 +174,8 @@ function setConnectionState(connected, message) {
   elements.loadTopicMap.disabled = !connected;
   elements.refreshSpaceTopics.disabled = !connected;
   elements.openSpaceTopics.disabled = !connected;
+  elements.openEmbeddedTopics.disabled = !connected;
+  elements.reloadEmbeddedTopics.disabled = !connected;
 }
 
 function setSelectionState(message, active) {
@@ -687,6 +695,21 @@ function buildTopicsIndexUrl() {
   params.set("selectionBarOption", "0");
   params.set("expanded", "true");
   return `${origin}/webapp/default/#/viewer/topics?${params.toString()}`;
+}
+
+function buildEmbeddedTopicsUrl() {
+  const origin = getViewerOrigin();
+  const params = new URLSearchParams();
+  if (state.projectId) {
+    params.set("projectId", state.projectId);
+  }
+  if (state.buildingId) {
+    params.set("buildingId", state.buildingId);
+  }
+  params.set("selectionBarOption", "0");
+  params.set("expanded", "true");
+  params.set("embedded", "true");
+  return `${origin}/webapp/default/?embedded=true#/viewer/topics?${params.toString()}`;
 }
 
 function navigateTopWindow(url) {
@@ -1525,6 +1548,32 @@ async function openCurrentSpaceTopicsIn2D() {
   if (!navigateTopWindow(url)) {
     throw new Error("Kunde inte oppna Topics-vyn i StreamBIM.");
   }
+}
+
+async function openEmbeddedTopicsView(forceReload = false) {
+  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
+  if (!currentSpaces.length) {
+    throw new Error("Inget aktivt space hittades att filtrera pa.");
+  }
+
+  await syncSpaceTopicFilters();
+
+  const url = buildEmbeddedTopicsUrl();
+  if (forceReload || elements.embeddedTopicsFrame.src !== url) {
+    elements.embeddedTopicsFrame.src = url;
+  } else {
+    elements.embeddedTopicsFrame.src = "";
+    elements.embeddedTopicsFrame.src = url;
+  }
+
+  elements.embeddedTopicsEmpty.classList.add("hidden");
+  elements.embeddedTopicsRoot.classList.remove("hidden");
+  elements.embeddedTopicsStatus.textContent =
+    "Embedded StreamBIM laddas med Topics-vyn och aktivt rumsfilter.";
+  appendLog("embedded topics", {
+    url,
+    currentSpaces,
+  });
 }
 
 async function showTopicInModel(entry) {
@@ -2731,6 +2780,42 @@ elements.openSpaceTopics.addEventListener("click", async () => {
     await openCurrentSpaceTopicsIn2D();
   } catch (error) {
     showError(`Kunde inte oppna 2D-kartan for aktuellt space: ${error.message || error}`);
+  }
+});
+
+elements.openEmbeddedTopics.addEventListener("click", async () => {
+  appendLog("Manuell handling", "Oppna embedded Topics/2D");
+
+  try {
+    if (!state.connected) {
+      throw new Error("Widgeten ar inte ansluten till StreamBIM.");
+    }
+
+    if (!state.currentSpaceGuids.length) {
+      await refreshCurrentSpaces();
+    }
+
+    await openEmbeddedTopicsView(false);
+  } catch (error) {
+    showError(`Kunde inte oppna embedded 2D-vyn: ${error.message || error}`);
+  }
+});
+
+elements.reloadEmbeddedTopics.addEventListener("click", async () => {
+  appendLog("Manuell handling", "Ladda om embedded Topics/2D");
+
+  try {
+    if (!state.connected) {
+      throw new Error("Widgeten ar inte ansluten till StreamBIM.");
+    }
+
+    if (!state.currentSpaceGuids.length) {
+      await refreshCurrentSpaces();
+    }
+
+    await openEmbeddedTopicsView(true);
+  } catch (error) {
+    showError(`Kunde inte ladda om embedded 2D-vyn: ${error.message || error}`);
   }
 });
 

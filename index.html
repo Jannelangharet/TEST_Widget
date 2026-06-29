@@ -116,6 +116,24 @@
 
       <section class="panel">
         <div class="panel-heading">
+          <h2>Embedded 2D Med Topics</h2>
+          <div class="button-row">
+            <button id="open-embedded-topics" class="ghost-button" type="button" disabled>Oppna embedded 2D</button>
+            <button id="reload-embedded-topics" class="ghost-button" type="button" disabled>Ladda om embedded</button>
+          </div>
+        </div>
+        <div id="embedded-topics-empty" class="empty-state">
+          <p>Den har vyn laddar StreamBIM inuti widgeten.</p>
+          <p class="helper-text">Widgeten skapar forst rumsfiltret och oppnar sedan StreamBIMs egen Topics/2D-vy som embedded iframe.</p>
+        </div>
+        <div id="embedded-topics-status" class="helper-text"></div>
+        <div id="embedded-topics-root" class="embedded-topics-root hidden">
+          <iframe id="embedded-topics-frame" title="Embedded StreamBIM Topics" class="embedded-topics-frame"></iframe>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
           <h2>Arenden I StreamBIM 2D</h2>
           <div class="button-row">
             <button id="load-topic-map" class="ghost-button" type="button">Ladda arenden</button>
@@ -151,6 +169,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260629a"></script>
+    <script src="./app.js?v=20260629b"></script>
   </body>
 </html>
