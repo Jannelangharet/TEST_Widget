@@ -15,9 +15,10 @@ const state = {
   topicLookupByPublicId: new Map(),
   currentSpaceGuids: [],
   currentSpaceNames: new Map(),
+  currentSpaceRecords: [],
   currentSpaceTopicEntries: [],
-  embeddedChildBridge: null,
-  embeddedChildConnected: false,
+  currentCameraState: null,
+  currentSpaceFilterReady: false,
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -66,12 +67,6 @@ const elements = {
   spaceTopicsRoot: document.getElementById("space-topics-root"),
   spaceTopicsSummary: document.getElementById("space-topics-summary"),
   spaceTopicsList: document.getElementById("space-topics-list"),
-  openEmbeddedTopics: document.getElementById("open-embedded-topics"),
-  reloadEmbeddedTopics: document.getElementById("reload-embedded-topics"),
-  embeddedTopicsEmpty: document.getElementById("embedded-topics-empty"),
-  embeddedTopicsStatus: document.getElementById("embedded-topics-status"),
-  embeddedTopicsRoot: document.getElementById("embedded-topics-root"),
-  embeddedTopicsFrame: document.getElementById("embedded-topics-frame"),
   loadTopicMap: document.getElementById("load-topic-map"),
   topicMapEmpty: document.getElementById("topic-map-empty"),
   topicMapStatus: document.getElementById("topic-map-status"),
@@ -175,9 +170,11 @@ function setConnectionState(connected, message) {
   elements.loadChecklists.disabled = !connected;
   elements.loadTopicMap.disabled = !connected;
   elements.refreshSpaceTopics.disabled = !connected;
-  elements.openSpaceTopics.disabled = !connected;
-  elements.openEmbeddedTopics.disabled = !connected;
-  elements.reloadEmbeddedTopics.disabled = !connected;
+  updateOpenSpaceTopicsButton();
+}
+
+function updateOpenSpaceTopicsButton() {
+  elements.openSpaceTopics.disabled = !state.connected || !state.currentSpaceFilterReady || !state.currentSpaceRecords.length;
 }
 
 function setSelectionState(message, active) {
@@ -699,19 +696,6 @@ function buildTopicsIndexUrl() {
   return `${origin}/webapp/default/#/viewer/topics?${params.toString()}`;
 }
 
-function buildEmbeddedTopicsUrl() {
-  const origin = getViewerOrigin();
-  const params = new URLSearchParams();
-  if (state.projectId) {
-    params.set("projectId", state.projectId);
-  }
-  if (state.buildingId) {
-    params.set("buildingId", state.buildingId);
-  }
-  params.set("embedded", "true");
-  return `${origin}/webapp/default/#/viewer?${params.toString()}`;
-}
-
 function navigateTopWindow(url) {
   try {
     const anchor = document.createElement("a");
@@ -757,70 +741,6 @@ function navigateTopWindow(url) {
   }
 
   return false;
-}
-
-function createChildBridge() {
-  return {
-    connectToChild: window.StreamBIM.connectToChild,
-    connectToParent: window.StreamBIM.connectToParent,
-    connectToWindow: window.StreamBIM.connectToWindow,
-    API: null,
-    _connection: null,
-  };
-}
-
-async function connectEmbeddedChildFrame() {
-  if (state.embeddedChildConnected && state.embeddedChildBridge?.API) {
-    return state.embeddedChildBridge.API;
-  }
-
-  const iframe = elements.embeddedTopicsFrame;
-  if (!iframe?.contentWindow || !iframe.src) {
-    throw new Error("Embedded iframe ar inte redo annu.");
-  }
-
-  state.embeddedChildBridge = createChildBridge();
-
-  await state.embeddedChildBridge.connectToChild(iframe, {
-    pickedObject: (result) => appendLog("embedded pickedObject", result),
-    spacesChanged: (guids) => appendLog("embedded spacesChanged", guids),
-    floorChanged: (floorId) => appendLog("embedded floorChanged", floorId),
-    cameraChanged: (cameraState) => appendLog("embedded cameraChanged", cameraState),
-    beforeInit: () => appendLog("embedded beforeInit", "Embedded viewer initierar"),
-  });
-
-  state.embeddedChildConnected = true;
-
-  try {
-    await state.embeddedChildBridge.API.setShowExpandButton(false);
-    await state.embeddedChildBridge.API.setStyles(`
-      .bar,
-      .tab-bar,
-      .slider-group,
-      .sidebar-resizer,
-      .intercom-hide-btn,
-      .status-bar {
-        display: none !important;
-      }
-      .map,
-      .map-component,
-      .flex.viewport-height.width-100.padding-top-66.pointer-events-none,
-      .width-100.margin-top-66.z-index-5.absolute {
-        top: 0 !important;
-        height: 100% !important;
-      }
-      body,
-      html {
-        background: #ffffff !important;
-      }
-    `);
-    await state.embeddedChildBridge.API.setSkyColor("white");
-    await state.embeddedChildBridge.API.setNavigationMode(1);
-  } catch (error) {
-    appendLog("embedded setup fel", error.message || String(error));
-  }
-
-  return state.embeddedChildBridge.API;
 }
 
 function formatDate(value) {
@@ -1410,40 +1330,13 @@ function renderSpaceTopicList(entries) {
   });
 }
 
-async function tryLoadSpaceName(spaceGuid) {
-  if (!spaceGuid || state.currentSpaceNames.has(spaceGuid)) {
-    return state.currentSpaceNames.get(spaceGuid) || "";
-  }
-
-  try {
-    const info = await callApi("getObjectInfo", spaceGuid);
-    const name =
-      info?.name ||
-      info?.description ||
-      info?.properties?.Name?.[0] ||
-      info?.properties?.name?.[0] ||
-      spaceGuid;
-    state.currentSpaceNames.set(spaceGuid, String(name));
-    return String(name);
-  } catch (error) {
-    appendLog("space-namn fel", {
-      spaceGuid,
-      error: error.message || String(error),
-    });
-    state.currentSpaceNames.set(spaceGuid, spaceGuid);
-    return spaceGuid;
-  }
-}
-
-async function updateCurrentSpaceLabels(spaceGuids) {
-  await Promise.all(spaceGuids.map((spaceGuid) => tryLoadSpaceName(spaceGuid)));
-}
-
 async function syncCurrentSpaceTopics() {
   const currentSpaces = state.currentSpaceGuids.filter(Boolean);
-  elements.openSpaceTopics.disabled = !state.connected;
+  state.currentSpaceFilterReady = false;
+  updateOpenSpaceTopicsButton();
 
   if (!currentSpaces.length) {
+    state.currentSpaceRecords = [];
     state.currentSpaceTopicEntries = [];
     elements.spaceTopicsEmpty.classList.remove("hidden");
     elements.spaceTopicsRoot.classList.add("hidden");
@@ -1471,8 +1364,6 @@ async function syncCurrentSpaceTopics() {
     state.topicMapEntries = await loadTopicMapEntries(state.topicMapFloors);
     buildTopicLookup(state.topicMapEntries);
   }
-
-  await updateCurrentSpaceLabels(currentSpaces);
 
   const entries = state.topicMapEntries.filter((entry) => {
     const spaceIds = Array.isArray(entry.spaceIds) ? entry.spaceIds : [];
@@ -1509,18 +1400,228 @@ async function syncCurrentSpaceTopics() {
 
   try {
     await syncSpaceTopicFilters();
+    state.currentSpaceFilterReady = true;
+    updateOpenSpaceTopicsButton();
+    elements.spaceTopicsStatus.textContent = `Aktivt space: ${spaceLabels.join(", ")}. Filtret ar klart for Topics/2D.`;
     appendLog("space-filter sync", {
       currentSpaces,
       count: currentSpaces.length,
     });
   } catch (error) {
+    state.currentSpaceFilterReady = false;
+    updateOpenSpaceTopicsButton();
+    elements.spaceTopicsStatus.textContent = `Aktivt space: ${spaceLabels.join(", ")}. Rumsfiltret kunde inte synkas for Topics/2D.`;
     appendLog("space-filter sync fel", error.message || String(error));
   }
+}
+
+function normalizeSpaceRecord(record) {
+  if (!record?.id) {
+    return null;
+  }
+
+  const attrs = record.attributes || {};
+  const relationships = record.relationships || {};
+
+  return {
+    id: String(record.id),
+    name: String(attrs.name || "").trim(),
+    longName: String(attrs["long-name"] || attrs.longName || "").trim(),
+    buildingId: String(relationships.building?.data?.id || ""),
+    floorId: String(relationships.floor?.data?.id || ""),
+    objectId: String(relationships.object?.data?.id || ""),
+  };
+}
+
+function getSpaceDisplayName(spaceRecord) {
+  if (!spaceRecord) {
+    return "";
+  }
+
+  if (spaceRecord.name && spaceRecord.longName) {
+    return `${spaceRecord.name} (${spaceRecord.longName})`;
+  }
+
+  return spaceRecord.name || spaceRecord.longName || spaceRecord.id;
+}
+
+function collectCameraPositionCandidates(source) {
+  const candidates = [];
+
+  const pushCandidate = (value) => {
+    if (Array.isArray(value) && value.length >= 3) {
+      const [x, y, z] = value.map(Number);
+      if ([x, y, z].every((item) => Number.isFinite(item))) {
+        candidates.push({ x, y, z });
+      }
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      const x = Number(value.x);
+      const y = Number(value.y);
+      const z = Number(value.z);
+      if ([x, y, z].every((item) => Number.isFinite(item))) {
+        candidates.push({ x, y, z });
+      }
+    }
+  };
+
+  if (!source || typeof source !== "object") {
+    return [];
+  }
+
+  [
+    source.position,
+    source.cameraPosition,
+    source.eye,
+    source.camera?.position,
+    source.camera?.eye,
+    source.state?.position,
+    source.state?.cameraPosition,
+    source.state?.eye,
+  ].forEach(pushCandidate);
+
+  return candidates;
+}
+
+function expandCameraPositionCandidates(cameraState) {
+  const positions = collectCameraPositionCandidates(cameraState);
+  const unique = new Map();
+
+  positions.forEach((position) => {
+    const variants = [position];
+    if (Math.abs(position.y) > 0.0001) {
+      variants.push({ x: position.x, y: -position.y, z: position.z });
+    }
+
+    variants.forEach((candidate) => {
+      const key = [candidate.x.toFixed(3), candidate.y.toFixed(3), candidate.z.toFixed(3)].join("|");
+      unique.set(key, candidate);
+    });
+  });
+
+  return [...unique.values()];
+}
+
+async function fetchCurrentSpacesByCamera(cameraState) {
+  if (!cameraState || !state.projectId || !state.buildingId) {
+    return [];
+  }
+
+  const positions = expandCameraPositionCandidates(cameraState);
+  appendLog("camera-space lookup", {
+    candidates: positions,
+  });
+
+  for (const position of positions) {
+    const params = new URLSearchParams({
+      "filter[building]": String(state.buildingId),
+      "filter[x]": position.x.toFixed(3),
+      "filter[y]": position.y.toFixed(3),
+      "filter[z]": position.z.toFixed(3),
+    });
+
+    const payload = await fetchJsonViaViewer(`/project-${state.projectId}/api/v1/v2/ifc-spaces?${params.toString()}`);
+    const records = (payload.data || []).map(normalizeSpaceRecord).filter(Boolean);
+
+    appendLog("camera-space svar", {
+      position,
+      count: records.length,
+      spaces: records,
+    });
+
+    if (records.length) {
+      return records;
+    }
+  }
+
+  return [];
+}
+
+async function fetchSpaceCatalog() {
+  if (!state.projectId || !state.buildingId) {
+    return [];
+  }
+
+  const params = new URLSearchParams({
+    "filter[building]": String(state.buildingId),
+    "page[limit]": "5000",
+    "page[skip]": "0",
+  });
+  const payload = await fetchJsonViaViewer(`/project-${state.projectId}/api/v1/v2/ifc-spaces?${params.toString()}`);
+  return (payload.data || []).map(normalizeSpaceRecord).filter(Boolean);
+}
+
+async function resolveCurrentSpaceRecords(spaceIds, cameraState) {
+  const cameraMatches = await fetchCurrentSpacesByCamera(cameraState);
+  if (cameraMatches.length) {
+    return cameraMatches;
+  }
+
+  const normalizedSpaceIds = (Array.isArray(spaceIds) ? spaceIds : [])
+    .map((spaceId) => String(spaceId || "").trim())
+    .filter(Boolean);
+
+  if (!normalizedSpaceIds.length) {
+    return [];
+  }
+
+  const catalog = await fetchSpaceCatalog();
+  const byId = new Map();
+
+  catalog.forEach((record) => {
+    byId.set(record.id, record);
+    if (record.objectId) {
+      byId.set(record.objectId, record);
+    }
+    if (record.name) {
+      byId.set(record.name, record);
+    }
+  });
+
+  const matches = normalizedSpaceIds.map((spaceId) => byId.get(spaceId)).filter(Boolean);
+  appendLog("space catalog fallback", {
+    requested: normalizedSpaceIds,
+    matches,
+  });
+  return matches;
+}
+
+function applyCurrentSpaceRecords(records, fallbackSpaceIds = []) {
+  const normalized = records.map(normalizeSpaceRecord).filter(Boolean);
+
+  state.currentSpaceRecords = normalized;
+  state.currentSpaceNames = new Map();
+
+  normalized.forEach((record) => {
+    const label = getSpaceDisplayName(record);
+    state.currentSpaceNames.set(record.id, label);
+    if (record.objectId) {
+      state.currentSpaceNames.set(record.objectId, label);
+    }
+    if (record.name) {
+      state.currentSpaceNames.set(record.name, label);
+    }
+  });
+
+  if (normalized.length) {
+    state.currentSpaceGuids = normalized.map((record) => record.id);
+    return;
+  }
+
+  state.currentSpaceGuids = fallbackSpaceIds
+    .map((spaceId) => String(spaceId || "").trim())
+    .filter(Boolean);
 }
 
 async function refreshCurrentSpaces() {
   if (!state.connected) {
     throw new Error("Widgeten ar inte ansluten till StreamBIM.");
+  }
+
+  if (!state.projectId || !state.buildingId) {
+    await loadProjectContext();
   }
 
   let spaces = [];
@@ -1532,13 +1633,24 @@ async function refreshCurrentSpaces() {
     appendLog("getSpaces fel", error.message || String(error));
   }
 
-  state.currentSpaceGuids = (Array.isArray(spaces) ? spaces : []).map((spaceGuid) => String(spaceGuid || "").trim()).filter(Boolean);
+  try {
+    state.currentCameraState = await callApi("getCameraState");
+    appendLog("getCameraState svar", state.currentCameraState);
+  } catch (error) {
+    appendLog("getCameraState fel", error.message || String(error));
+  }
+
+  const normalizedSpaceIds = (Array.isArray(spaces) ? spaces : []).map((spaceGuid) => String(spaceGuid || "").trim()).filter(Boolean);
+  const records = await resolveCurrentSpaceRecords(normalizedSpaceIds, state.currentCameraState);
+  applyCurrentSpaceRecords(records, normalizedSpaceIds);
   await syncCurrentSpaceTopics();
 }
 
 async function handleSpacesChanged(guids) {
   appendLog("spacesChanged callback", guids);
-  state.currentSpaceGuids = (Array.isArray(guids) ? guids : []).map((spaceGuid) => String(spaceGuid || "").trim()).filter(Boolean);
+  const normalizedSpaceIds = (Array.isArray(guids) ? guids : []).map((spaceGuid) => String(spaceGuid || "").trim()).filter(Boolean);
+  const records = await resolveCurrentSpaceRecords(normalizedSpaceIds, state.currentCameraState);
+  applyCurrentSpaceRecords(records, normalizedSpaceIds);
   await syncCurrentSpaceTopics();
 }
 
@@ -1566,16 +1678,22 @@ async function clearWidgetSpaceTopicFilters() {
   );
 }
 
-async function createSpaceTopicFilter(spaceGuid) {
-  const spaceName = state.currentSpaceNames.get(spaceGuid) || spaceGuid;
+async function createSpaceTopicFilter(spaceRecord) {
+  const spaceId = String(spaceRecord?.id || "").trim();
+  if (!spaceId) {
+    return;
+  }
+
+  const spaceName = getSpaceDisplayName(spaceRecord);
   const payload = {
     data: {
       type: "topic-filters",
       attributes: {
         name: `[Widget space] ${spaceName}`,
         key: "spaces",
-        value: spaceGuid,
+        value: spaceId,
         recordName: spaceName,
+        empty: false,
         section: 0,
       },
     },
@@ -1591,76 +1709,30 @@ async function createSpaceTopicFilter(spaceGuid) {
 }
 
 async function syncSpaceTopicFilters() {
-  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
+  const currentSpaces = state.currentSpaceRecords.filter((spaceRecord) => spaceRecord?.id);
   if (!state.projectId) {
     await loadProjectContext();
   }
 
   await clearWidgetSpaceTopicFilters();
-  for (const spaceGuid of currentSpaces) {
-    await createSpaceTopicFilter(spaceGuid);
+  for (const spaceRecord of currentSpaces) {
+    await createSpaceTopicFilter(spaceRecord);
   }
 }
 
-async function openCurrentSpaceTopicsIn2D() {
-  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
+function openCurrentSpaceTopicsIn2D() {
+  const currentSpaces = state.currentSpaceRecords.filter((spaceRecord) => spaceRecord?.id);
   if (!currentSpaces.length) {
     throw new Error("Inget aktivt space hittades att filtrera pa.");
+  }
+
+  if (!state.currentSpaceFilterReady) {
+    throw new Error("Rumsfiltret ar inte klart an. Klicka pa Uppdatera rum och prova igen.");
   }
 
   const url = buildTopicsIndexUrl();
   if (!navigateTopWindow(url)) {
     throw new Error("Kunde inte oppna Topics-vyn i StreamBIM.");
-  }
-}
-
-async function openEmbeddedTopicsView(forceReload = false) {
-  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
-  if (!currentSpaces.length) {
-    throw new Error("Inget aktivt space hittades att filtrera pa.");
-  }
-
-  await syncSpaceTopicFilters();
-
-  const url = buildEmbeddedTopicsUrl();
-  state.embeddedChildConnected = false;
-  state.embeddedChildBridge = null;
-
-  await new Promise((resolve, reject) => {
-    const iframe = elements.embeddedTopicsFrame;
-    const timeoutId = window.setTimeout(() => {
-      iframe.removeEventListener("load", handleLoad);
-      reject(new Error("Embedded iframe hann inte laddas i tid."));
-    }, 15000);
-
-    function handleLoad() {
-      window.clearTimeout(timeoutId);
-      iframe.removeEventListener("load", handleLoad);
-      resolve();
-    }
-
-    iframe.addEventListener("load", handleLoad, { once: true });
-    iframe.src = "";
-    iframe.src = url;
-  });
-
-  elements.embeddedTopicsEmpty.classList.add("hidden");
-  elements.embeddedTopicsRoot.classList.remove("hidden");
-  elements.embeddedTopicsStatus.textContent =
-    "Embedded StreamBIM laddas med aktivt rumsfilter och en ren viewer-vy.";
-  appendLog("embedded topics", {
-    url,
-    currentSpaces,
-  });
-
-  try {
-    await connectEmbeddedChildFrame();
-    elements.embeddedTopicsStatus.textContent =
-      "Embedded StreamBIM ar ansluten. Anvand listan ovan for arendena i aktuellt rum.";
-  } catch (error) {
-    appendLog("embedded connect fel", error.message || String(error));
-    elements.embeddedTopicsStatus.textContent =
-      "Embedded viewer laddades men kunde inte kopplas upp via widget-API.";
   }
 }
 
@@ -2692,7 +2764,10 @@ async function connectWidget() {
         appendLog("floorChanged callback", floorId);
         await syncTopicMapToActiveFloor(floorId);
       },
-      cameraChanged: (cameraState) => appendLog("cameraChanged callback", cameraState),
+      cameraChanged: (cameraState) => {
+        state.currentCameraState = cameraState;
+        appendLog("cameraChanged callback", cameraState);
+      },
       beforeInit: () => appendLog("beforeInit callback", "Viewer initierar"),
     };
 
@@ -2741,7 +2816,7 @@ async function connectWidget() {
     setSelectionState("Klicka pa ett objekt i modellen", false);
     elements.actionFeedback.textContent = "Widgeten ar ansluten och lyssnar nu pa objektklick.";
     appendLog("Anslutning klar", "Widgeten ar nu kopplad till parent.");
-    appendLog("Autoladdning", "Laddar projektdata och signaturoversikt automatiskt efter anslutning.");
+    appendLog("Autoladdning", "Laddar projektdata och uppdaterar aktuellt space efter anslutning.");
     await initializeProjectData();
   } catch (error) {
     setConnectionState(false, "Anslutning misslyckades");
@@ -2853,7 +2928,7 @@ elements.refreshSpaceTopics.addEventListener("click", async () => {
   }
 });
 
-elements.openSpaceTopics.addEventListener("click", async () => {
+elements.openSpaceTopics.addEventListener("click", () => {
   appendLog("Manuell handling", "Oppna Topics med aktivt space-filter");
 
   try {
@@ -2861,49 +2936,9 @@ elements.openSpaceTopics.addEventListener("click", async () => {
       throw new Error("Widgeten ar inte ansluten till StreamBIM.");
     }
 
-    if (!state.currentSpaceGuids.length) {
-      await refreshCurrentSpaces();
-    }
-
-    await openCurrentSpaceTopicsIn2D();
+    openCurrentSpaceTopicsIn2D();
   } catch (error) {
     showError(`Kunde inte oppna 2D-kartan for aktuellt space: ${error.message || error}`);
-  }
-});
-
-elements.openEmbeddedTopics.addEventListener("click", async () => {
-  appendLog("Manuell handling", "Oppna embedded Topics/2D");
-
-  try {
-    if (!state.connected) {
-      throw new Error("Widgeten ar inte ansluten till StreamBIM.");
-    }
-
-    if (!state.currentSpaceGuids.length) {
-      await refreshCurrentSpaces();
-    }
-
-    await openEmbeddedTopicsView(false);
-  } catch (error) {
-    showError(`Kunde inte oppna embedded 2D-vyn: ${error.message || error}`);
-  }
-});
-
-elements.reloadEmbeddedTopics.addEventListener("click", async () => {
-  appendLog("Manuell handling", "Ladda om embedded Topics/2D");
-
-  try {
-    if (!state.connected) {
-      throw new Error("Widgeten ar inte ansluten till StreamBIM.");
-    }
-
-    if (!state.currentSpaceGuids.length) {
-      await refreshCurrentSpaces();
-    }
-
-    await openEmbeddedTopicsView(true);
-  } catch (error) {
-    showError(`Kunde inte ladda om embedded 2D-vyn: ${error.message || error}`);
   }
 });
 
