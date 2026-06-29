@@ -97,6 +97,25 @@
 
       <section class="panel">
         <div class="panel-heading">
+          <h2>Arenden I Aktuellt Space</h2>
+          <div class="button-row">
+            <button id="refresh-space-topics" class="ghost-button" type="button">Uppdatera rum</button>
+            <button id="open-space-topics" class="ghost-button" type="button" disabled>Visa i 2D kartan</button>
+          </div>
+        </div>
+        <div id="space-topics-empty" class="empty-state">
+          <p>Widgeten letar efter vilket space du star i.</p>
+          <p class="helper-text">Nar ett space ar aktivt listas alla arenden som ar kopplade till det rummet. Knappen oppnar sedan Topics med rumsfiltret aktivt.</p>
+        </div>
+        <div id="space-topics-status" class="helper-text"></div>
+        <div id="space-topics-root" class="topic-map-root hidden">
+          <div id="space-topics-summary" class="helper-text"></div>
+          <div id="space-topics-list" class="topic-map-list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
           <h2>Arenden I StreamBIM 2D</h2>
           <div class="button-row">
             <button id="load-topic-map" class="ghost-button" type="button">Ladda arenden</button>
@@ -132,6 +151,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260623b"></script>
+    <script src="./app.js?v=20260629a"></script>
   </body>
 </html>

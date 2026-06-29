@@ -13,6 +13,9 @@ const state = {
   topicMapMarkersByFloor: new Map(),
   topicLookupById: new Map(),
   topicLookupByPublicId: new Map(),
+  currentSpaceGuids: [],
+  currentSpaceNames: new Map(),
+  currentSpaceTopicEntries: [],
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -54,6 +57,13 @@ const elements = {
   checklistEmpty: document.getElementById("checklist-empty"),
   checklistStatus: document.getElementById("checklist-status"),
   checklistRoot: document.getElementById("checklist-root"),
+  refreshSpaceTopics: document.getElementById("refresh-space-topics"),
+  openSpaceTopics: document.getElementById("open-space-topics"),
+  spaceTopicsEmpty: document.getElementById("space-topics-empty"),
+  spaceTopicsStatus: document.getElementById("space-topics-status"),
+  spaceTopicsRoot: document.getElementById("space-topics-root"),
+  spaceTopicsSummary: document.getElementById("space-topics-summary"),
+  spaceTopicsList: document.getElementById("space-topics-list"),
   loadTopicMap: document.getElementById("load-topic-map"),
   topicMapEmpty: document.getElementById("topic-map-empty"),
   topicMapStatus: document.getElementById("topic-map-status"),
@@ -155,7 +165,9 @@ function setConnectionState(connected, message) {
   elements.connectionBadge.textContent = message;
   elements.connectionBadge.className = connected ? "badge badge-live" : "badge badge-waiting";
   elements.loadChecklists.disabled = !connected;
-  elements.loadTopicMap.disabled = false;
+  elements.loadTopicMap.disabled = !connected;
+  elements.refreshSpaceTopics.disabled = !connected;
+  elements.openSpaceTopics.disabled = !connected || !state.currentSpaceGuids.length;
 }
 
 function setSelectionState(message, active) {
@@ -651,6 +663,46 @@ function buildTopicDetailUrl(topicId) {
   return `https://app.streambim.com/webapp/default/#/viewer/topics/detail/${topicId}?projectId=${encodeURIComponent(state.projectId)}`;
 }
 
+function buildTopicsIndexUrl() {
+  const origin = getViewerOrigin();
+  const params = new URLSearchParams();
+  if (state.projectId) {
+    params.set("projectId", state.projectId);
+  }
+  params.set("selectionBarOption", "0");
+  return `${origin}/webapp/default/#/viewer/topics?${params.toString()}`;
+}
+
+function navigateTopWindow(url) {
+  const targets = [window.top, window.parent, window];
+
+  for (const target of targets) {
+    try {
+      if (target?.location) {
+        target.location.href = url;
+        return true;
+      }
+    } catch (error) {
+      appendLog("navigation fel", {
+        url,
+        error: error.message || String(error),
+      });
+    }
+  }
+
+  try {
+    const opened = window.open(url, "_top");
+    return Boolean(opened);
+  } catch (error) {
+    appendLog("window.open fel", {
+      url,
+      error: error.message || String(error),
+    });
+  }
+
+  return false;
+}
+
 function formatDate(value) {
   if (!value) {
     return "-";
@@ -905,6 +957,17 @@ function getViewpointPlanPoint(viewpoint) {
   };
 }
 
+function getViewpointSpaceIds(viewpoint) {
+  const spaces = viewpoint?.relationships?.spaces?.data;
+  if (!Array.isArray(spaces)) {
+    return [];
+  }
+
+  return spaces
+    .map((space) => String(space?.id || "").trim())
+    .filter(Boolean);
+}
+
 function getMapMarkerTopicId(marker) {
   const attrs = marker?.attributes || {};
   const relationships = marker?.relationships || {};
@@ -1044,6 +1107,7 @@ async function loadTopicMapEntries(floors) {
       const mapPoint = getViewpointPlanPoint(viewpoint);
       const objectGuid = readTopicObjectGuid(topic) || getViewpointSelectionGuid(viewpoint);
       const floorId = findClosestFloorId(cameraY, floors);
+      const spaceIds = getViewpointSpaceIds(viewpoint);
 
       entries.push({
         id: String(topic.id),
@@ -1055,6 +1119,7 @@ async function loadTopicMapEntries(floors) {
         workflow: getTopicWorkflowLabel(topic),
         objectGuid,
         floorId,
+        spaceIds,
         cameraY,
         cameraState,
         mapPoint,
@@ -1198,6 +1263,221 @@ function renderTopicMapList(entries, floor) {
   });
 }
 
+function renderSpaceTopicList(entries) {
+  elements.spaceTopicsList.innerHTML = "";
+
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "<p>Inga arenden hittades i aktuellt space.</p>";
+    elements.spaceTopicsList.appendChild(empty);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const card = document.createElement("article");
+    card.className = `topic-card ${getTopicStatusClass(entry.status)}`;
+    card.innerHTML = `
+      <h3>${escapeHtml(entry.title)}</h3>
+      <div class="topic-card-status">
+        <span class="topic-status-chip ${getTopicStatusClass(entry.status)}"><span class="topic-status-dot"></span>${escapeHtml(entry.status)}</span>
+      </div>
+      <p>Arende ${escapeHtml(entry.publicId)}</p>
+      <p>${escapeHtml(entry.workflow)} | Skapad ${escapeHtml(entry.createdLabel)}</p>
+      <div class="topic-card-actions">
+        <button type="button" data-action="show-topic" data-topic-id="${escapeHtml(entry.id)}">Visa i modellen</button>
+        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noreferrer">Oppna arende</a>
+      </div>
+    `;
+    elements.spaceTopicsList.appendChild(card);
+  });
+}
+
+async function tryLoadSpaceName(spaceGuid) {
+  if (!spaceGuid || state.currentSpaceNames.has(spaceGuid)) {
+    return state.currentSpaceNames.get(spaceGuid) || "";
+  }
+
+  try {
+    const info = await callApi("getObjectInfo", spaceGuid);
+    const name =
+      info?.name ||
+      info?.description ||
+      info?.properties?.Name?.[0] ||
+      info?.properties?.name?.[0] ||
+      spaceGuid;
+    state.currentSpaceNames.set(spaceGuid, String(name));
+    return String(name);
+  } catch (error) {
+    appendLog("space-namn fel", {
+      spaceGuid,
+      error: error.message || String(error),
+    });
+    state.currentSpaceNames.set(spaceGuid, spaceGuid);
+    return spaceGuid;
+  }
+}
+
+async function updateCurrentSpaceLabels(spaceGuids) {
+  await Promise.all(spaceGuids.map((spaceGuid) => tryLoadSpaceName(spaceGuid)));
+}
+
+async function syncCurrentSpaceTopics() {
+  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
+  elements.openSpaceTopics.disabled = !currentSpaces.length;
+
+  if (!currentSpaces.length) {
+    state.currentSpaceTopicEntries = [];
+    elements.spaceTopicsEmpty.classList.remove("hidden");
+    elements.spaceTopicsRoot.classList.add("hidden");
+    elements.spaceTopicsStatus.textContent = "Inget aktivt space hittades i StreamBIM just nu.";
+    elements.spaceTopicsSummary.textContent = "";
+    elements.spaceTopicsList.innerHTML = "";
+    return;
+  }
+
+  if (!state.topicMapEntries.length) {
+    elements.spaceTopicsEmpty.classList.add("hidden");
+    elements.spaceTopicsRoot.classList.remove("hidden");
+    elements.spaceTopicsStatus.textContent = "Laddar projektets arenden for att matcha aktuellt space...";
+    elements.spaceTopicsSummary.textContent = "";
+    elements.spaceTopicsList.innerHTML = "";
+    if (!state.projectId) {
+      await loadProjectContext();
+    }
+    if (!state.workflows.size) {
+      await loadWorkflows();
+    }
+    if (!state.topicMapFloors.length) {
+      state.topicMapFloors = sortFloors(await callApi("getFloors"));
+    }
+    state.topicMapEntries = await loadTopicMapEntries(state.topicMapFloors);
+    buildTopicLookup(state.topicMapEntries);
+  }
+
+  await updateCurrentSpaceLabels(currentSpaces);
+
+  const entries = state.topicMapEntries.filter((entry) => {
+    const spaceIds = Array.isArray(entry.spaceIds) ? entry.spaceIds : [];
+    return spaceIds.some((spaceId) => currentSpaces.includes(String(spaceId)));
+  });
+
+  state.currentSpaceTopicEntries = entries;
+  elements.spaceTopicsEmpty.classList.add("hidden");
+  elements.spaceTopicsRoot.classList.remove("hidden");
+
+  const spaceLabels = currentSpaces.map((spaceGuid) => state.currentSpaceNames.get(spaceGuid) || spaceGuid);
+  const counts = entries.reduce(
+    (bucket, entry) => {
+      bucket[getTopicStatusKey(entry.status)] += 1;
+      return bucket;
+    },
+    { open: 0, done: 0, closed: 0, other: 0 },
+  );
+
+  elements.spaceTopicsStatus.textContent = `Aktivt space: ${spaceLabels.join(", ")}.`;
+  elements.spaceTopicsSummary.textContent = `${entries.length} arenden i aktuellt space. Open: ${counts.open}, Done: ${counts.done}, Closed: ${counts.closed}.${counts.other ? ` Ovriga: ${counts.other}.` : ""}`;
+  renderSpaceTopicList(entries);
+}
+
+async function refreshCurrentSpaces() {
+  if (!state.connected) {
+    throw new Error("Widgeten ar inte ansluten till StreamBIM.");
+  }
+
+  let spaces = [];
+
+  try {
+    spaces = await callApi("getSpaces");
+    appendLog("getSpaces svar", spaces);
+  } catch (error) {
+    appendLog("getSpaces fel", error.message || String(error));
+  }
+
+  state.currentSpaceGuids = (Array.isArray(spaces) ? spaces : []).map((spaceGuid) => String(spaceGuid || "").trim()).filter(Boolean);
+  await syncCurrentSpaceTopics();
+}
+
+async function handleSpacesChanged(guids) {
+  appendLog("spacesChanged callback", guids);
+  state.currentSpaceGuids = (Array.isArray(guids) ? guids : []).map((spaceGuid) => String(spaceGuid || "").trim()).filter(Boolean);
+  await syncCurrentSpaceTopics();
+}
+
+async function fetchTopicFilters() {
+  const payload = await fetchJsonViaViewer(`/project-${state.projectId}/api/v1/v2/topic-filters?page[limit]=200&page[skip]=0`);
+  return payload.data || [];
+}
+
+async function clearWidgetSpaceTopicFilters() {
+  const filters = await fetchTopicFilters();
+  const widgetFilters = filters.filter((filter) => {
+    const attrs = filter?.attributes || {};
+    return String(attrs.name || "").startsWith("[Widget space]");
+  });
+
+  await Promise.all(
+    widgetFilters.map((filter) =>
+      callApi("makeApiRequest", {
+        url: toAbsoluteViewerUrl(`/project-${state.projectId}/api/v1/v2/topic-filters/${encodeURIComponent(filter.id)}`),
+        method: "DELETE",
+        accept: "application/vnd.api+json",
+        contentType: "application/vnd.api+json",
+      }),
+    ),
+  );
+}
+
+async function createSpaceTopicFilter(spaceGuid) {
+  const spaceName = state.currentSpaceNames.get(spaceGuid) || spaceGuid;
+  const payload = {
+    data: {
+      type: "topic-filters",
+      attributes: {
+        name: `[Widget space] ${spaceName}`,
+        key: "spaces",
+        value: spaceGuid,
+        section: 0,
+      },
+    },
+  };
+
+  await callApi("makeApiRequest", {
+    url: toAbsoluteViewerUrl(`/project-${state.projectId}/api/v1/v2/topic-filters`),
+    method: "POST",
+    accept: "application/vnd.api+json",
+    contentType: "application/vnd.api+json",
+    body: payload,
+  });
+}
+
+async function openCurrentSpaceTopicsIn2D() {
+  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
+  if (!currentSpaces.length) {
+    throw new Error("Inget aktivt space hittades att filtrera pa.");
+  }
+
+  if (!state.projectId) {
+    await loadProjectContext();
+  }
+
+  await clearWidgetSpaceTopicFilters();
+  for (const spaceGuid of currentSpaces) {
+    await createSpaceTopicFilter(spaceGuid);
+  }
+
+  try {
+    await callApi("setExpanded", false);
+  } catch (error) {
+    appendLog("setExpanded fel", error.message || String(error));
+  }
+
+  const url = buildTopicsIndexUrl();
+  if (!navigateTopWindow(url)) {
+    throw new Error("Kunde inte oppna Topics-vyn i StreamBIM.");
+  }
+}
+
 async function showTopicInModel(entry) {
   if (!entry) {
     return;
@@ -1324,6 +1604,9 @@ async function loadTopicMapOverview() {
   state.topicMapFloorId = String(firstUsefulFloor.id);
   populateTopicFloorSelect();
   await renderTopicMapFloor();
+  if (state.currentSpaceGuids.length) {
+    await syncCurrentSpaceTopics();
+  }
 }
 
 function buildSignatureEntry(topic, comments) {
@@ -2176,6 +2459,16 @@ async function initializeProjectData() {
     elements.topicMapStatus.textContent =
       "2D-kartan kunde inte laddas automatiskt. Se debug-loggen och prova igen med knappen.";
   }
+
+  try {
+    await refreshCurrentSpaces();
+  } catch (error) {
+    appendLog("Space-arenden", `Autoladdning misslyckades: ${error.message || error}`);
+    elements.spaceTopicsEmpty.classList.remove("hidden");
+    elements.spaceTopicsRoot.classList.add("hidden");
+    elements.spaceTopicsStatus.textContent =
+      "Kunde inte lasa aktivt space automatiskt. Prova knappen Uppdatera rum eller ga in i ett rum i modellen.";
+  }
 }
 
 async function handlePickedObject(result) {
@@ -2208,7 +2501,13 @@ async function connectWidget() {
 
     const callbacks = {
       pickedObject: handlePickedObject,
-      spacesChanged: (guids) => appendLog("spacesChanged callback", guids),
+      spacesChanged: async (guids) => {
+        try {
+          await handleSpacesChanged(guids);
+        } catch (error) {
+          appendLog("spacesChanged fel", error.message || String(error));
+        }
+      },
       floorChanged: async (floorId) => {
         appendLog("floorChanged callback", floorId);
         await syncTopicMapToActiveFloor(floorId);
@@ -2354,6 +2653,44 @@ elements.loadTopicMap.addEventListener("click", async () => {
   }
 });
 
+elements.refreshSpaceTopics.addEventListener("click", async () => {
+  appendLog("Manuell handling", "Ladda arenden i aktuellt space");
+
+  try {
+    if (!state.connected) {
+      appendLog("Space-arenden", "Widgeten var inte ansluten, provar att ansluta innan uppdatering.");
+      await connectWidget();
+    }
+
+    if (!state.connected) {
+      throw new Error("Widgeten ar fortfarande inte ansluten till StreamBIM.");
+    }
+
+    await refreshCurrentSpaces();
+    elements.actionFeedback.textContent = "Arenden for aktuellt space laddades.";
+  } catch (error) {
+    showError(`Kunde inte lasa arenden i aktuellt space: ${error.message || error}`);
+  }
+});
+
+elements.openSpaceTopics.addEventListener("click", async () => {
+  appendLog("Manuell handling", "Oppna Topics med aktivt space-filter");
+
+  try {
+    if (!state.connected) {
+      throw new Error("Widgeten ar inte ansluten till StreamBIM.");
+    }
+
+    if (!state.currentSpaceGuids.length) {
+      await refreshCurrentSpaces();
+    }
+
+    await openCurrentSpaceTopicsIn2D();
+  } catch (error) {
+    showError(`Kunde inte oppna 2D-kartan for aktuellt space: ${error.message || error}`);
+  }
+});
+
 elements.topicFloorSelect.addEventListener("change", async (event) => {
   state.topicMapFloorId = String(event.target.value || "");
   await renderTopicMapFloor();
@@ -2388,6 +2725,16 @@ elements.topicMapList.addEventListener("click", async (event) => {
   }
 
   const entry = state.topicMapEntries.find((candidate) => candidate.id === String(button.dataset.topicId || ""));
+  await showTopicInModel(entry);
+});
+
+elements.spaceTopicsList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action='show-topic']");
+  if (!button) {
+    return;
+  }
+
+  const entry = state.currentSpaceTopicEntries.find((candidate) => candidate.id === String(button.dataset.topicId || ""));
   await showTopicInModel(entry);
 });
 
