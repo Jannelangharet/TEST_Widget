@@ -55,6 +55,7 @@ const elements = {
   checklistStatus: document.getElementById("checklist-status"),
   checklistRoot: document.getElementById("checklist-root"),
   loadTopicMap: document.getElementById("load-topic-map"),
+  openTopicsView: document.getElementById("open-topics-view"),
   topicMapEmpty: document.getElementById("topic-map-empty"),
   topicMapStatus: document.getElementById("topic-map-status"),
   topicMapRoot: document.getElementById("topic-map-root"),
@@ -651,6 +652,69 @@ function buildTopicDetailUrl(topicId) {
   return `https://app.streambim.com/webapp/default/#/viewer/topics/detail/${topicId}?projectId=${encodeURIComponent(state.projectId)}`;
 }
 
+function buildTopicsIndexUrl() {
+  const origin = getViewerOrigin();
+  const params = new URLSearchParams();
+  if (state.projectId) {
+    params.set("projectId", state.projectId);
+  }
+  if (state.buildingId) {
+    params.set("buildingId", state.buildingId);
+  }
+  const query = params.toString();
+  return `${origin}/webapp/default/#/viewer/topics${query ? `?${query}` : ""}`;
+}
+
+function navigateTopWindow(url) {
+  const targets = [window.top, window.parent, window];
+
+  for (const target of targets) {
+    try {
+      if (target?.location) {
+        target.location.href = url;
+        return true;
+      }
+    } catch (error) {
+      appendLog("navigation fel", {
+        url,
+        error: error.message || String(error),
+      });
+    }
+  }
+
+  try {
+    const opened = window.open(url, "_top");
+    return Boolean(opened);
+  } catch (error) {
+    appendLog("window.open fel", {
+      url,
+      error: error.message || String(error),
+    });
+  }
+
+  return false;
+}
+
+async function openTopicsViewInStreamBim(topicId = "") {
+  if (!state.projectId) {
+    await loadProjectContext();
+  }
+
+  const url = topicId ? buildTopicDetailUrl(topicId) : buildTopicsIndexUrl();
+  const opened = navigateTopWindow(url);
+  appendLog("Oppnar topics-vy", {
+    url,
+    opened,
+    topicId: topicId || null,
+  });
+
+  if (!opened) {
+    throw new Error("Kunde inte be StreamBIM oppna topics-vyn.");
+  }
+
+  return url;
+}
+
 function formatDate(value) {
   if (!value) {
     return "-";
@@ -1191,7 +1255,7 @@ function renderTopicMapList(entries, floor) {
       <p>${escapeHtml(entry.workflow)} | Skapad ${escapeHtml(entry.createdLabel)}</p>
       <div class="topic-card-actions">
         <button type="button" data-action="show-topic" data-topic-id="${escapeHtml(entry.id)}">Visa i modellen</button>
-        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noreferrer">Oppna arende</a>
+        <a href="${escapeHtml(entry.url)}" target="_top" rel="noreferrer">Oppna arende</a>
       </div>
     `;
     elements.topicMapList.appendChild(card);
@@ -1222,7 +1286,8 @@ async function showTopicInModel(entry) {
       setSelectionState(`Valt objekt: ${entry.objectGuid}`, true);
     }
 
-    elements.actionFeedback.textContent = `Visar arende ${entry.publicId} i modellen.`;
+    await openTopicsViewInStreamBim(entry.id);
+    elements.actionFeedback.textContent = `Visar arende ${entry.publicId} i modellen och oppnade topics-vyn.`;
   } catch (error) {
     showError(`Kunde inte visa arendet i modellen: ${error.message || error}`);
   }
@@ -2348,8 +2413,21 @@ elements.loadTopicMap.addEventListener("click", async () => {
     }
 
     await loadTopicMapOverview();
+    await openTopicsViewInStreamBim();
+    elements.actionFeedback.textContent = "Arenden laddades och StreamBIM vaxlades till topics-vyn.";
   } catch (error) {
     showError(`Kunde inte ladda 2D arendekartan: ${error.message || error}`);
+  }
+});
+
+elements.openTopicsView.addEventListener("click", async () => {
+  appendLog("Manuell handling", "Oppna topics-vyn i StreamBIM");
+  try {
+    const url = await openTopicsViewInStreamBim();
+    elements.actionFeedback.textContent = "StreamBIM oppnade topics-vyn for projektet.";
+    elements.topicMapStatus.textContent = `Topics-vyn oppnades i StreamBIM: ${url}`;
+  } catch (error) {
+    showError(`Kunde inte oppna topics-vyn i StreamBIM: ${error.message || error}`);
   }
 });
 
