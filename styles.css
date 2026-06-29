@@ -296,14 +296,6 @@ button:disabled {
   gap: 12px;
 }
 
-.topic-map-zoom {
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 0.86rem;
-  font-weight: 600;
-}
-
 .topic-floor-picker {
   display: grid;
   gap: 6px;
@@ -322,41 +314,10 @@ button:disabled {
   color: var(--text);
 }
 
-.topic-map-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
-  gap: 16px;
-}
-
-.topic-map-stage,
-.topic-map-sidebar {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--surface-strong);
-}
-
-.topic-map-stage {
-  position: relative;
-  min-height: 360px;
-  overflow: hidden;
-}
-
-.topic-map-image {
-  display: block;
-  width: 100%;
-  height: auto;
-  object-fit: contain;
-  background: linear-gradient(180deg, #fffdf8 0%, #f6efe3 100%);
-}
-
-.topic-map-sidebar {
-  padding: 16px;
-}
-
 .topic-map-list {
   display: grid;
   gap: 10px;
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .topic-card {
@@ -665,12 +626,6 @@ button:disabled {
   .panel-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .checklist-header,
-  .checklist-footer,
-  .topic-map-layout {
-    grid-template-columns: 1fr;
   }
 
   .topic-map-toolbar,

@@ -97,14 +97,14 @@
 
       <section class="panel">
         <div class="panel-heading">
-          <h2>2D Arendekarta</h2>
+          <h2>Arenden I StreamBIM 2D</h2>
           <div class="button-row">
             <button id="load-topic-map" class="ghost-button" type="button">Ladda arenden</button>
           </div>
         </div>
         <div id="topic-map-empty" class="empty-state">
-          <p>2D-kartan laddar projektets arenden och uppskattar vilket plan de hor till.</p>
-          <p class="helper-text">Du kan byta plan, se en 2D-karta fran StreamBIM och klicka pa ett arende for att visa det i modellen.</p>
+          <p>Widgeten styr StreamBIMs vanliga 2D-plan och laddar arenden for valt plan.</p>
+          <p class="helper-text">Har visas ingen egen karta langre. Widgeten valjer plan i StreamBIM och skickar map-markers-requesten fran viewer-konteksten.</p>
         </div>
         <div id="topic-map-status" class="helper-text"></div>
         <div id="topic-map-root" class="topic-map-root hidden">
@@ -115,26 +115,10 @@
               <select id="topic-floor-select" disabled></select>
             </label>
             <button id="topic-floor-next" class="ghost-button" type="button" disabled>Nasta plan</button>
-            <div class="topic-map-zoom">
-              <span>Zoom 2D</span>
-              <div class="button-row">
-                <button id="topic-zoom-out" class="ghost-button" type="button">Zooma ut</button>
-                <button id="topic-zoom-reset" class="ghost-button" type="button">Anpassa</button>
-                <button id="topic-zoom-in" class="ghost-button" type="button">Zooma in</button>
-              </div>
-            </div>
           </div>
-          <div class="topic-map-layout">
-            <div class="topic-map-stage">
-              <img id="topic-map-image" class="topic-map-image hidden" alt="2D karta for valt plan" />
-              <div id="topic-map-placeholder" class="empty-state">
-                <p>Ingen 2D-karta laddad annu.</p>
-              </div>
-            </div>
-            <div class="topic-map-sidebar">
-              <div id="topic-map-summary" class="helper-text"></div>
-              <div id="topic-map-list" class="topic-map-list"></div>
-            </div>
+          <div class="topic-map-root">
+            <div id="topic-map-summary" class="helper-text"></div>
+            <div id="topic-map-list" class="topic-map-list"></div>
           </div>
         </div>
       </section>

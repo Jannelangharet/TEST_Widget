@@ -10,8 +10,6 @@ const state = {
   topicMapEntries: [],
   topicMapFloors: [],
   topicMapFloorId: "",
-  topicMapImage: "",
-  topicMapResolution: 0.18,
   topicMapMarkersByFloor: new Map(),
   topicLookupById: new Map(),
   topicLookupByPublicId: new Map(),
@@ -63,11 +61,6 @@ const elements = {
   topicFloorPrev: document.getElementById("topic-floor-prev"),
   topicFloorSelect: document.getElementById("topic-floor-select"),
   topicFloorNext: document.getElementById("topic-floor-next"),
-  topicZoomOut: document.getElementById("topic-zoom-out"),
-  topicZoomReset: document.getElementById("topic-zoom-reset"),
-  topicZoomIn: document.getElementById("topic-zoom-in"),
-  topicMapImage: document.getElementById("topic-map-image"),
-  topicMapPlaceholder: document.getElementById("topic-map-placeholder"),
   topicMapSummary: document.getElementById("topic-map-summary"),
   topicMapList: document.getElementById("topic-map-list"),
   clearLog: document.getElementById("clear-log"),
@@ -870,10 +863,6 @@ function getTopicStatusClass(status) {
   return `topic-status-${getTopicStatusKey(status)}`;
 }
 
-function clampTopicMapResolution(value) {
-  return Math.min(1.2, Math.max(0.03, Number(value) || 0.18));
-}
-
 function getTopicWorkflowLabel(topic) {
   const workflowId = topic?.relationships?.workflow?.data?.id || "";
   return state.workflows.get(workflowId) || workflowId || "Okant workflow";
@@ -1209,32 +1198,6 @@ function renderTopicMapList(entries, floor) {
   });
 }
 
-async function updateTopicMapImage(floorId) {
-  elements.topicMapImage.classList.add("hidden");
-  elements.topicMapPlaceholder.classList.remove("hidden");
-  elements.topicMapPlaceholder.innerHTML = `<p>Laddar 2D-karta fran StreamBIM...</p><p class="helper-text">Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel</p>`;
-
-  try {
-    await callApi("gotoFloor", floorId);
-  } catch (error) {
-    appendLog("gotoFloor fel", {
-      floorId,
-      error: error.message || String(error),
-    });
-  }
-
-  await delay(150);
-  const image = await callApi("getMapImage", {
-    width: 1800,
-    height: 1400,
-    resolution: clampTopicMapResolution(state.topicMapResolution),
-  });
-  state.topicMapImage = image;
-  elements.topicMapImage.src = image;
-  elements.topicMapImage.classList.remove("hidden");
-  elements.topicMapPlaceholder.classList.add("hidden");
-}
-
 async function showTopicInModel(entry) {
   if (!entry) {
     return;
@@ -1273,15 +1236,19 @@ async function renderTopicMapFloor() {
   }
 
   updateTopicFloorButtons();
-  elements.topicMapStatus.textContent = `Laddar 2D-karta och arenden for ${floor.name || `plan ${floor.id}`}...`;
+  elements.topicMapStatus.textContent = `Vaxlar StreamBIM till ${floor.name || `plan ${floor.id}`} och laddar map-markers...`;
 
   try {
-    await updateTopicMapImage(floor.id);
+    await callApi("gotoFloor", floor.id);
+    elements.actionFeedback.textContent = `StreamBIM flyttades till ${floor.name || `plan ${floor.id}`}.`;
   } catch (error) {
-    elements.topicMapImage.classList.add("hidden");
-    elements.topicMapPlaceholder.classList.remove("hidden");
-    elements.topicMapPlaceholder.innerHTML = `<p>Kunde inte ladda 2D-kartan for detta plan.</p><p class="helper-text">${escapeHtml(error.message || String(error))}</p>`;
+    appendLog("gotoFloor fel", {
+      floorId: floor.id,
+      error: error.message || String(error),
+    });
   }
+
+  await delay(150);
 
   let entries = [];
   let markerCount = 0;
@@ -1298,7 +1265,7 @@ async function renderTopicMapFloor() {
   }
 
   renderTopicMapList(entries, floor);
-  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. Widgeten skickade StreamBIMs map-markers-request for detta plan och fick ${markerCount} markorer i svar. Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel.`;
+  elements.topicMapStatus.textContent = `StreamBIM star pa ${floor.name || `plan ${floor.id}`}. Widgeten skickade map-markers-requesten for planet och fick ${markerCount} markorer i svar.`;
 }
 
 async function syncTopicMapToActiveFloor(floorId) {
@@ -2411,27 +2378,6 @@ elements.topicFloorNext.addEventListener("click", async () => {
   state.topicMapFloorId = String(state.topicMapFloors[currentIndex + 1].id);
   elements.topicFloorSelect.value = state.topicMapFloorId;
   await renderTopicMapFloor();
-});
-
-elements.topicZoomOut.addEventListener("click", async () => {
-  state.topicMapResolution = clampTopicMapResolution(state.topicMapResolution * 1.6);
-  if (state.topicMapFloorId) {
-    await renderTopicMapFloor();
-  }
-});
-
-elements.topicZoomReset.addEventListener("click", async () => {
-  state.topicMapResolution = 0.18;
-  if (state.topicMapFloorId) {
-    await renderTopicMapFloor();
-  }
-});
-
-elements.topicZoomIn.addEventListener("click", async () => {
-  state.topicMapResolution = clampTopicMapResolution(state.topicMapResolution / 1.6);
-  if (state.topicMapFloorId) {
-    await renderTopicMapFloor();
-  }
 });
 
 elements.topicMapList.addEventListener("click", async (event) => {
