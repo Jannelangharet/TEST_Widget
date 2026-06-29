@@ -690,6 +690,23 @@ function buildTopicsIndexUrl() {
 }
 
 function navigateTopWindow(url) {
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_top";
+    anchor.rel = "noreferrer";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return true;
+  } catch (error) {
+    appendLog("anchor navigation fel", {
+      url,
+      error: error.message || String(error),
+    });
+  }
+
   const targets = [window.top, window.parent, window];
 
   for (const target of targets) {
@@ -708,7 +725,7 @@ function navigateTopWindow(url) {
 
   try {
     const opened = window.open(url, "_top");
-    return Boolean(opened);
+    return opened !== null;
   } catch (error) {
     appendLog("window.open fel", {
       url,
