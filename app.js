@@ -16,6 +16,8 @@ const state = {
   currentSpaceGuids: [],
   currentSpaceNames: new Map(),
   currentSpaceTopicEntries: [],
+  embeddedChildBridge: null,
+  embeddedChildConnected: false,
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -706,10 +708,8 @@ function buildEmbeddedTopicsUrl() {
   if (state.buildingId) {
     params.set("buildingId", state.buildingId);
   }
-  params.set("selectionBarOption", "0");
-  params.set("expanded", "true");
   params.set("embedded", "true");
-  return `${origin}/webapp/default/?embedded=true#/viewer/topics?${params.toString()}`;
+  return `${origin}/webapp/default/#/viewer?${params.toString()}`;
 }
 
 function navigateTopWindow(url) {
@@ -757,6 +757,70 @@ function navigateTopWindow(url) {
   }
 
   return false;
+}
+
+function createChildBridge() {
+  return {
+    connectToChild: window.StreamBIM.connectToChild,
+    connectToParent: window.StreamBIM.connectToParent,
+    connectToWindow: window.StreamBIM.connectToWindow,
+    API: null,
+    _connection: null,
+  };
+}
+
+async function connectEmbeddedChildFrame() {
+  if (state.embeddedChildConnected && state.embeddedChildBridge?.API) {
+    return state.embeddedChildBridge.API;
+  }
+
+  const iframe = elements.embeddedTopicsFrame;
+  if (!iframe?.contentWindow || !iframe.src) {
+    throw new Error("Embedded iframe ar inte redo annu.");
+  }
+
+  state.embeddedChildBridge = createChildBridge();
+
+  await state.embeddedChildBridge.connectToChild(iframe, {
+    pickedObject: (result) => appendLog("embedded pickedObject", result),
+    spacesChanged: (guids) => appendLog("embedded spacesChanged", guids),
+    floorChanged: (floorId) => appendLog("embedded floorChanged", floorId),
+    cameraChanged: (cameraState) => appendLog("embedded cameraChanged", cameraState),
+    beforeInit: () => appendLog("embedded beforeInit", "Embedded viewer initierar"),
+  });
+
+  state.embeddedChildConnected = true;
+
+  try {
+    await state.embeddedChildBridge.API.setShowExpandButton(false);
+    await state.embeddedChildBridge.API.setStyles(`
+      .bar,
+      .tab-bar,
+      .slider-group,
+      .sidebar-resizer,
+      .intercom-hide-btn,
+      .status-bar {
+        display: none !important;
+      }
+      .map,
+      .map-component,
+      .flex.viewport-height.width-100.padding-top-66.pointer-events-none,
+      .width-100.margin-top-66.z-index-5.absolute {
+        top: 0 !important;
+        height: 100% !important;
+      }
+      body,
+      html {
+        background: #ffffff !important;
+      }
+    `);
+    await state.embeddedChildBridge.API.setSkyColor("white");
+    await state.embeddedChildBridge.API.setNavigationMode(1);
+  } catch (error) {
+    appendLog("embedded setup fel", error.message || String(error));
+  }
+
+  return state.embeddedChildBridge.API;
 }
 
 function formatDate(value) {
@@ -1559,21 +1623,45 @@ async function openEmbeddedTopicsView(forceReload = false) {
   await syncSpaceTopicFilters();
 
   const url = buildEmbeddedTopicsUrl();
-  if (forceReload || elements.embeddedTopicsFrame.src !== url) {
-    elements.embeddedTopicsFrame.src = url;
-  } else {
-    elements.embeddedTopicsFrame.src = "";
-    elements.embeddedTopicsFrame.src = url;
-  }
+  state.embeddedChildConnected = false;
+  state.embeddedChildBridge = null;
+
+  await new Promise((resolve, reject) => {
+    const iframe = elements.embeddedTopicsFrame;
+    const timeoutId = window.setTimeout(() => {
+      iframe.removeEventListener("load", handleLoad);
+      reject(new Error("Embedded iframe hann inte laddas i tid."));
+    }, 15000);
+
+    function handleLoad() {
+      window.clearTimeout(timeoutId);
+      iframe.removeEventListener("load", handleLoad);
+      resolve();
+    }
+
+    iframe.addEventListener("load", handleLoad, { once: true });
+    iframe.src = "";
+    iframe.src = url;
+  });
 
   elements.embeddedTopicsEmpty.classList.add("hidden");
   elements.embeddedTopicsRoot.classList.remove("hidden");
   elements.embeddedTopicsStatus.textContent =
-    "Embedded StreamBIM laddas med Topics-vyn och aktivt rumsfilter.";
+    "Embedded StreamBIM laddas med aktivt rumsfilter och en ren viewer-vy.";
   appendLog("embedded topics", {
     url,
     currentSpaces,
   });
+
+  try {
+    await connectEmbeddedChildFrame();
+    elements.embeddedTopicsStatus.textContent =
+      "Embedded StreamBIM ar ansluten. Anvand listan ovan for arendena i aktuellt rum.";
+  } catch (error) {
+    appendLog("embedded connect fel", error.message || String(error));
+    elements.embeddedTopicsStatus.textContent =
+      "Embedded viewer laddades men kunde inte kopplas upp via widget-API.";
+  }
 }
 
 async function showTopicInModel(entry) {
