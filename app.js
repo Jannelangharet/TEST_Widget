@@ -12,6 +12,9 @@ const state = {
   topicMapFloorId: "",
   topicMapImage: "",
   topicMapResolution: 0.18,
+  topicMapMarkersByFloor: new Map(),
+  topicLookupById: new Map(),
+  topicLookupByPublicId: new Map(),
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -915,6 +918,43 @@ function getViewpointPlanPoint(viewpoint) {
   };
 }
 
+function getMapMarkerTopicId(marker) {
+  const attrs = marker?.attributes || {};
+  const relationships = marker?.relationships || {};
+
+  return String(
+    relationships.topic?.data?.id ||
+      relationships["parent-topic"]?.data?.id ||
+      relationships["parentTopic"]?.data?.id ||
+      attrs["topic-id"] ||
+      attrs.topicId ||
+      attrs["parent-topic-id"] ||
+      attrs.parentTopicId ||
+      attrs["public-id"] ||
+      "",
+  );
+}
+
+function getMapMarkerPoint(marker) {
+  const attrs = marker?.attributes || {};
+  const candidates = [attrs.marker, attrs.position, attrs.point, attrs.coordinates];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && typeof candidate[0] === "number" && typeof candidate[1] === "number") {
+      return {
+        x: candidate[0],
+        y: candidate[1],
+      };
+    }
+  }
+
+  if (typeof attrs.x === "number" && typeof attrs.y === "number") {
+    return { x: attrs.x, y: attrs.y };
+  }
+
+  return null;
+}
+
 function sortFloors(floors) {
   return [...floors].sort((left, right) => {
     const leftHeight = Number(left?.height ?? 0);
@@ -955,6 +995,32 @@ async function loadTopicViewpoints(topicId) {
     `/project-${state.projectId}/api/v1/v2/topic-viewpoints?page[limit]=20&page[skip]=0&filter[topic]=${encodeURIComponent(topicId)}`,
   );
   return payload.data || [];
+}
+
+async function loadTopicMapMarkers(floorId) {
+  const cached = state.topicMapMarkersByFloor.get(String(floorId));
+  if (cached) {
+    return cached;
+  }
+
+  const params = new URLSearchParams({
+    "filter[isDeleted]": "false",
+    "filter[channel]": "workflows",
+    "filter[building]": String(state.buildingId || ""),
+    "filter[floor]": String(floorId),
+    "page[limit]": "5000",
+    "page[skip]": "0",
+  });
+
+  const payload = await fetchJsonViaViewer(`/project-${state.projectId}/api/v1/v2/map-markers?${params.toString()}`);
+  const markers = payload.data || [];
+  state.topicMapMarkersByFloor.set(String(floorId), markers);
+  appendLog("map-markers laddade", {
+    floorId,
+    count: markers.length,
+    sample: markers.slice(0, 5),
+  });
+  return markers;
 }
 
 async function loadTopicMapEntries(floors) {
@@ -1016,6 +1082,66 @@ async function loadTopicMapEntries(floors) {
   }
 
   return entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+}
+
+function buildTopicLookup(entries) {
+  state.topicLookupById = new Map();
+  state.topicLookupByPublicId = new Map();
+
+  entries.forEach((entry) => {
+    state.topicLookupById.set(String(entry.id), entry);
+    state.topicLookupByPublicId.set(String(entry.publicId), entry);
+  });
+}
+
+function mergeFloorEntriesFromMarkers(markers, floor) {
+  const entries = [];
+  const seen = new Set();
+
+  markers.forEach((marker) => {
+    const topicId = getMapMarkerTopicId(marker);
+    const topicEntry =
+      state.topicLookupById.get(String(topicId || "")) ||
+      state.topicLookupByPublicId.get(String(topicId || "")) ||
+      null;
+
+    const entry = {
+      ...(topicEntry || {}),
+      id: String(topicEntry?.id || topicId || marker.id),
+      publicId: topicEntry?.publicId || topicId || marker.id,
+      title:
+        topicEntry?.title ||
+        marker?.attributes?.title ||
+        marker?.attributes?.name ||
+        `Arende ${topicId || marker.id}`,
+      createdAt: topicEntry?.createdAt || marker?.attributes?.["creation-date"] || "",
+      createdLabel: topicEntry?.createdLabel || formatDate(marker?.attributes?.["creation-date"] || ""),
+      status: topicEntry?.status || marker?.attributes?.status || "Open",
+      workflow: topicEntry?.workflow || marker?.attributes?.channel || "workflow",
+      objectGuid: topicEntry?.objectGuid || "",
+      floorId: String(floor.id),
+      cameraY: topicEntry?.cameraY || null,
+      cameraState: topicEntry?.cameraState || null,
+      mapPoint: getMapMarkerPoint(marker) || topicEntry?.mapPoint || null,
+      url: topicEntry?.url || buildTopicDetailUrl(topicId || marker.id),
+    };
+
+    const dedupeKey = `${entry.id}|${entry.publicId}|${entry.title}`;
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+
+    seen.add(dedupeKey);
+    entries.push(entry);
+  });
+
+  if (entries.length) {
+    return entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+  }
+
+  return state.topicMapEntries
+    .filter((entry) => String(entry.floorId) === String(floor.id))
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
 }
 
 function updateTopicFloorButtons() {
@@ -1236,12 +1362,25 @@ async function renderTopicMapFloor() {
     elements.topicMapPlaceholder.innerHTML = `<p>Kunde inte ladda 2D-kartan for detta plan.</p><p class="helper-text">${escapeHtml(error.message || String(error))}</p>`;
   }
 
-  const entries = state.topicMapEntries.filter((entry) => String(entry.floorId) === String(floor.id));
+  let entries = [];
+  let usedMapMarkers = false;
+  try {
+    const markers = await loadTopicMapMarkers(floor.id);
+    entries = mergeFloorEntriesFromMarkers(markers, floor);
+    usedMapMarkers = markers.length > 0;
+  } catch (error) {
+    appendLog("map-markers fel", {
+      floorId: floor.id,
+      error: error.message || String(error),
+    });
+    entries = state.topicMapEntries.filter((entry) => String(entry.floorId) === String(floor.id));
+  }
+
   renderTopicMapLegend(entries);
   renderTopicMapOverlay(entries);
   renderTopicMapList(entries, floor);
   const positionedCount = entries.filter((entry) => entry.mapPoint).length;
-  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${positionedCount} arenden har kartmarkorer i 2D-vyn. Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel.`;
+  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${positionedCount} arenden har kartmarkorer i 2D-vyn. Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel.${usedMapMarkers ? " Kalla: StreamBIM map-markers." : " Kalla: fallback via viewpoints."}`;
 }
 
 async function syncTopicMapToActiveFloor(floorId) {
@@ -1277,6 +1416,7 @@ async function loadTopicMapOverview() {
   elements.topicMapLegend.innerHTML = "";
   elements.topicMapList.innerHTML = "";
   clearTopicMapOverlay();
+  state.topicMapMarkersByFloor = new Map();
 
   if (!state.projectId) {
     await loadProjectContext();
@@ -1292,6 +1432,7 @@ async function loadTopicMapOverview() {
   }
 
   state.topicMapEntries = await loadTopicMapEntries(floors);
+  buildTopicLookup(state.topicMapEntries);
 
   const firstUsefulFloor =
     floors.find((floor) => state.topicMapEntries.some((entry) => String(entry.floorId) === String(floor.id))) ||
