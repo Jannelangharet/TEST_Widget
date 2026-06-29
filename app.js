@@ -685,6 +685,7 @@ function buildTopicsIndexUrl() {
     params.set("projectId", state.projectId);
   }
   params.set("selectionBarOption", "0");
+  params.set("expanded", "true");
   return `${origin}/webapp/default/#/viewer/topics?${params.toString()}`;
 }
 
@@ -1401,6 +1402,16 @@ async function syncCurrentSpaceTopics() {
   elements.spaceTopicsStatus.textContent = `Aktivt space: ${spaceLabels.join(", ")}.`;
   elements.spaceTopicsSummary.textContent = `${entries.length} arenden i aktuellt space. Open: ${counts.open}, Done: ${counts.done}, Closed: ${counts.closed}.${counts.other ? ` Ovriga: ${counts.other}.` : ""}`;
   renderSpaceTopicList(entries);
+
+  try {
+    await syncSpaceTopicFilters();
+    appendLog("space-filter sync", {
+      currentSpaces,
+      count: currentSpaces.length,
+    });
+  } catch (error) {
+    appendLog("space-filter sync fel", error.message || String(error));
+  }
 }
 
 async function refreshCurrentSpaces() {
@@ -1475,12 +1486,8 @@ async function createSpaceTopicFilter(spaceGuid) {
   });
 }
 
-async function openCurrentSpaceTopicsIn2D() {
+async function syncSpaceTopicFilters() {
   const currentSpaces = state.currentSpaceGuids.filter(Boolean);
-  if (!currentSpaces.length) {
-    throw new Error("Inget aktivt space hittades att filtrera pa.");
-  }
-
   if (!state.projectId) {
     await loadProjectContext();
   }
@@ -1489,11 +1496,12 @@ async function openCurrentSpaceTopicsIn2D() {
   for (const spaceGuid of currentSpaces) {
     await createSpaceTopicFilter(spaceGuid);
   }
+}
 
-  try {
-    await callApi("setExpanded", false);
-  } catch (error) {
-    appendLog("setExpanded fel", error.message || String(error));
+async function openCurrentSpaceTopicsIn2D() {
+  const currentSpaces = state.currentSpaceGuids.filter(Boolean);
+  if (!currentSpaces.length) {
+    throw new Error("Inget aktivt space hittades att filtrera pa.");
   }
 
   const url = buildTopicsIndexUrl();
@@ -2466,12 +2474,6 @@ async function initializeProjectData() {
     await loadProjectContext();
   } catch (error) {
     appendLog("Projektinfo", `Projektinfo kunde inte laddas initialt: ${error.message || error}`);
-  }
-
-  try {
-    await loadSignatureOverview();
-  } catch (error) {
-    appendLog("Signaturoversikt", `Autoladdning misslyckades: ${error.message || error}`);
   }
 
   try {
