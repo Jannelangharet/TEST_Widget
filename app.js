@@ -11,6 +11,7 @@ const state = {
   topicMapFloors: [],
   topicMapFloorId: "",
   topicMapImage: "",
+  topicMapResolution: 0.18,
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -59,6 +60,9 @@ const elements = {
   topicFloorPrev: document.getElementById("topic-floor-prev"),
   topicFloorSelect: document.getElementById("topic-floor-select"),
   topicFloorNext: document.getElementById("topic-floor-next"),
+  topicZoomOut: document.getElementById("topic-zoom-out"),
+  topicZoomReset: document.getElementById("topic-zoom-reset"),
+  topicZoomIn: document.getElementById("topic-zoom-in"),
   topicMapLegend: document.getElementById("topic-map-legend"),
   topicMapImage: document.getElementById("topic-map-image"),
   topicMapOverlay: document.getElementById("topic-map-overlay"),
@@ -865,6 +869,10 @@ function getTopicStatusClass(status) {
   return `topic-status-${getTopicStatusKey(status)}`;
 }
 
+function clampTopicMapResolution(value) {
+  return Math.min(1.2, Math.max(0.03, Number(value) || 0.18));
+}
+
 function getTopicWorkflowLabel(topic) {
   const workflowId = topic?.relationships?.workflow?.data?.id || "";
   return state.workflows.get(workflowId) || workflowId || "Okant workflow";
@@ -1156,7 +1164,7 @@ function renderTopicMapOverlay(entries) {
 async function updateTopicMapImage(floorId) {
   elements.topicMapImage.classList.add("hidden");
   elements.topicMapPlaceholder.classList.remove("hidden");
-  elements.topicMapPlaceholder.innerHTML = "<p>Laddar 2D-karta fran StreamBIM...</p>";
+  elements.topicMapPlaceholder.innerHTML = `<p>Laddar 2D-karta fran StreamBIM...</p><p class="helper-text">Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel</p>`;
   clearTopicMapOverlay();
 
   try {
@@ -1169,7 +1177,11 @@ async function updateTopicMapImage(floorId) {
   }
 
   await delay(150);
-  const image = await callApi("getMapImage", { width: 1600, height: 1200, resolution: 0.05 });
+  const image = await callApi("getMapImage", {
+    width: 1800,
+    height: 1400,
+    resolution: clampTopicMapResolution(state.topicMapResolution),
+  });
   state.topicMapImage = image;
   elements.topicMapImage.src = image;
   elements.topicMapImage.classList.remove("hidden");
@@ -1229,7 +1241,7 @@ async function renderTopicMapFloor() {
   renderTopicMapOverlay(entries);
   renderTopicMapList(entries, floor);
   const positionedCount = entries.filter((entry) => entry.mapPoint).length;
-  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${positionedCount} arenden har kartmarkorer i 2D-vyn.`;
+  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${positionedCount} arenden har kartmarkorer i 2D-vyn. Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel.`;
 }
 
 async function syncTopicMapToActiveFloor(floorId) {
@@ -2342,6 +2354,27 @@ elements.topicFloorNext.addEventListener("click", async () => {
   state.topicMapFloorId = String(state.topicMapFloors[currentIndex + 1].id);
   elements.topicFloorSelect.value = state.topicMapFloorId;
   await renderTopicMapFloor();
+});
+
+elements.topicZoomOut.addEventListener("click", async () => {
+  state.topicMapResolution = clampTopicMapResolution(state.topicMapResolution * 1.6);
+  if (state.topicMapFloorId) {
+    await renderTopicMapFloor();
+  }
+});
+
+elements.topicZoomReset.addEventListener("click", async () => {
+  state.topicMapResolution = 0.18;
+  if (state.topicMapFloorId) {
+    await renderTopicMapFloor();
+  }
+});
+
+elements.topicZoomIn.addEventListener("click", async () => {
+  state.topicMapResolution = clampTopicMapResolution(state.topicMapResolution / 1.6);
+  if (state.topicMapFloorId) {
+    await renderTopicMapFloor();
+  }
 });
 
 elements.topicMapList.addEventListener("click", async (event) => {

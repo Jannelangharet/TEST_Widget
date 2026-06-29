@@ -302,6 +302,14 @@ button:disabled {
   gap: 12px;
 }
 
+.topic-map-zoom {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
 .topic-floor-picker {
   display: grid;
   gap: 6px;
