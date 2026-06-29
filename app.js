@@ -155,7 +155,7 @@ function setConnectionState(connected, message) {
   elements.connectionBadge.textContent = message;
   elements.connectionBadge.className = connected ? "badge badge-live" : "badge badge-waiting";
   elements.loadChecklists.disabled = !connected;
-  elements.loadTopicMap.disabled = !connected;
+  elements.loadTopicMap.disabled = false;
 }
 
 function setSelectionState(message, active) {
@@ -1108,6 +1108,31 @@ async function renderTopicMapFloor() {
   elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}.`;
 }
 
+async function syncTopicMapToActiveFloor(floorId) {
+  if (!floorId || !state.topicMapFloors.length) {
+    return;
+  }
+
+  const normalizedFloorId = String(floorId);
+  const existingFloor = state.topicMapFloors.find((candidate) => String(candidate.id) === normalizedFloorId);
+  if (!existingFloor) {
+    appendLog("aktivt plan saknas i widgeten", {
+      floorId: normalizedFloorId,
+      knownFloors: state.topicMapFloors.map((floor) => floor.id),
+    });
+    return;
+  }
+
+  state.topicMapFloorId = normalizedFloorId;
+  elements.topicFloorSelect.value = normalizedFloorId;
+
+  if (state.topicMapEntries.length) {
+    await renderTopicMapFloor();
+  } else {
+    updateTopicFloorButtons();
+  }
+}
+
 async function loadTopicMapOverview() {
   elements.topicMapEmpty.classList.add("hidden");
   elements.topicMapRoot.classList.remove("hidden");
@@ -2022,7 +2047,10 @@ async function connectWidget() {
     const callbacks = {
       pickedObject: handlePickedObject,
       spacesChanged: (guids) => appendLog("spacesChanged callback", guids),
-      floorChanged: (floorId) => appendLog("floorChanged callback", floorId),
+      floorChanged: async (floorId) => {
+        appendLog("floorChanged callback", floorId);
+        await syncTopicMapToActiveFloor(floorId);
+      },
       cameraChanged: (cameraState) => appendLog("cameraChanged callback", cameraState),
       beforeInit: () => appendLog("beforeInit callback", "Viewer initierar"),
     };
@@ -2041,8 +2069,26 @@ async function connectWidget() {
     });
 
     if (typeof StreamBIM.connectToParent === "function") {
-      await StreamBIM.connectToParent(window, callbacks);
-      appendLog("Anslutning", "Anvande StreamBIM.connectToParent(window, callbacks)");
+      let connected = false;
+      const connectTargets = [window.parent, window].filter(Boolean);
+
+      for (const target of connectTargets) {
+        try {
+          await StreamBIM.connectToParent(target, callbacks);
+          appendLog("Anslutning", `Anvande StreamBIM.connectToParent(${target === window.parent ? "window.parent" : "window"}, callbacks)`);
+          connected = true;
+          break;
+        } catch (error) {
+          appendLog("connectToParent fel", {
+            target: target === window.parent ? "window.parent" : "window",
+            message: error.message || String(error),
+          });
+        }
+      }
+
+      if (!connected) {
+        throw new Error("connectToParent misslyckades mot bade window.parent och window.");
+      }
     } else if (typeof StreamBIM.connect === "function") {
       await StreamBIM.connect(callbacks);
       appendLog("Anslutning", "Anvande legacy StreamBIM.connect(callbacks)");
@@ -2130,6 +2176,15 @@ elements.exportPdf.addEventListener("click", () => {
 elements.loadTopicMap.addEventListener("click", async () => {
   appendLog("Manuell handling", "Ladda 2D arendekarta");
   try {
+    if (!state.connected) {
+      appendLog("2D arendekarta", "Widgeten var inte ansluten, provar att ansluta innan laddning.");
+      await connectWidget();
+    }
+
+    if (!state.connected) {
+      throw new Error("Widgeten ar fortfarande inte ansluten till StreamBIM.");
+    }
+
     await loadTopicMapOverview();
   } catch (error) {
     showError(`Kunde inte ladda 2D arendekartan: ${error.message || error}`);
