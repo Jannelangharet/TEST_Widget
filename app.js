@@ -59,7 +59,9 @@ const elements = {
   topicFloorPrev: document.getElementById("topic-floor-prev"),
   topicFloorSelect: document.getElementById("topic-floor-select"),
   topicFloorNext: document.getElementById("topic-floor-next"),
+  topicMapLegend: document.getElementById("topic-map-legend"),
   topicMapImage: document.getElementById("topic-map-image"),
+  topicMapOverlay: document.getElementById("topic-map-overlay"),
   topicMapPlaceholder: document.getElementById("topic-map-placeholder"),
   topicMapSummary: document.getElementById("topic-map-summary"),
   topicMapList: document.getElementById("topic-map-list"),
@@ -845,6 +847,24 @@ function getTopicStatusLabel(topic) {
   return statusId || "Okand status";
 }
 
+function getTopicStatusKey(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "open" || normalized === CHECKLIST_STATUS_IDS.open) {
+    return "open";
+  }
+  if (normalized === "done" || normalized === CHECKLIST_STATUS_IDS.done) {
+    return "done";
+  }
+  if (normalized === "closed" || normalized === CHECKLIST_STATUS_IDS.closed) {
+    return "closed";
+  }
+  return "other";
+}
+
+function getTopicStatusClass(status) {
+  return `topic-status-${getTopicStatusKey(status)}`;
+}
+
 function getTopicWorkflowLabel(topic) {
   const workflowId = topic?.relationships?.workflow?.data?.id || "";
   return state.workflows.get(workflowId) || workflowId || "Okant workflow";
@@ -873,6 +893,18 @@ function getViewpointCameraState(viewpoint) {
 function getViewpointCameraY(viewpoint) {
   const position = getViewpointCameraState(viewpoint)?.position;
   return Array.isArray(position) && typeof position[1] === "number" ? position[1] : null;
+}
+
+function getViewpointPlanPoint(viewpoint) {
+  const position = getViewpointCameraState(viewpoint)?.position;
+  if (!Array.isArray(position) || typeof position[0] !== "number" || typeof position[2] !== "number") {
+    return null;
+  }
+
+  return {
+    x: position[0],
+    y: position[2],
+  };
 }
 
 function sortFloors(floors) {
@@ -948,6 +980,7 @@ async function loadTopicMapEntries(floors) {
       const viewpoint = viewpoints[0] || null;
       const cameraState = getViewpointCameraState(viewpoint);
       const cameraY = getViewpointCameraY(viewpoint);
+      const mapPoint = getViewpointPlanPoint(viewpoint);
       const objectGuid = readTopicObjectGuid(topic) || getViewpointSelectionGuid(viewpoint);
       const floorId = findClosestFloorId(cameraY, floors);
 
@@ -963,6 +996,7 @@ async function loadTopicMapEntries(floors) {
         floorId,
         cameraY,
         cameraState,
+        mapPoint,
         url: buildTopicDetailUrl(topic.id),
       });
     });
@@ -1007,7 +1041,14 @@ function populateTopicFloorSelect() {
 function renderTopicMapList(entries, floor) {
   elements.topicMapList.innerHTML = "";
   const unmatched = state.topicMapEntries.filter((entry) => !entry.floorId).length;
-  elements.topicMapSummary.textContent = `${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${state.topicMapEntries.length} arenden totalt i projektet.${unmatched ? ` ${unmatched} arenden kunde inte kopplas till ett plan.` : ""}`;
+  const counts = entries.reduce(
+    (bucket, entry) => {
+      bucket[getTopicStatusKey(entry.status)] += 1;
+      return bucket;
+    },
+    { open: 0, done: 0, closed: 0, other: 0 },
+  );
+  elements.topicMapSummary.textContent = `${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. Open: ${counts.open}, Done: ${counts.done}, Closed: ${counts.closed}.${counts.other ? ` Ovriga: ${counts.other}.` : ""}${unmatched ? ` ${unmatched} arenden kunde inte kopplas till ett plan.` : ""}`;
 
   if (!entries.length) {
     const empty = document.createElement("div");
@@ -1019,10 +1060,13 @@ function renderTopicMapList(entries, floor) {
 
   entries.forEach((entry) => {
     const card = document.createElement("article");
-    card.className = "topic-card";
+    card.className = `topic-card ${getTopicStatusClass(entry.status)}`;
     card.innerHTML = `
       <h3>${escapeHtml(entry.title)}</h3>
-      <p>Arende ${escapeHtml(entry.publicId)} | ${escapeHtml(entry.status)}</p>
+      <div class="topic-card-status">
+        <span class="topic-status-chip ${getTopicStatusClass(entry.status)}"><span class="topic-status-dot"></span>${escapeHtml(entry.status)}</span>
+      </div>
+      <p>Arende ${escapeHtml(entry.publicId)}</p>
       <p>${escapeHtml(entry.workflow)} | Skapad ${escapeHtml(entry.createdLabel)}</p>
       <div class="topic-card-actions">
         <button type="button" data-action="show-topic" data-topic-id="${escapeHtml(entry.id)}">Visa i modellen</button>
@@ -1033,10 +1077,87 @@ function renderTopicMapList(entries, floor) {
   });
 }
 
+function renderTopicMapLegend(entries) {
+  const counts = entries.reduce(
+    (bucket, entry) => {
+      bucket[getTopicStatusKey(entry.status)] += 1;
+      return bucket;
+    },
+    { open: 0, done: 0, closed: 0, other: 0 },
+  );
+
+  const items = [
+    { key: "open", label: "Open", count: counts.open },
+    { key: "done", label: "Done", count: counts.done },
+    { key: "closed", label: "Closed", count: counts.closed },
+  ];
+  if (counts.other) {
+    items.push({ key: "other", label: "Ovriga", count: counts.other });
+  }
+
+  elements.topicMapLegend.innerHTML = items
+    .filter((item) => item.count > 0)
+    .map(
+      (item) =>
+        `<span class="topic-status-chip topic-status-${item.key}"><span class="topic-status-dot"></span>${item.label}: ${item.count}</span>`,
+    )
+    .join("");
+}
+
+function clearTopicMapOverlay() {
+  elements.topicMapOverlay.innerHTML = "";
+  elements.topicMapOverlay.classList.add("hidden");
+}
+
+function renderTopicMapOverlay(entries) {
+  clearTopicMapOverlay();
+
+  const positionedEntries = entries.filter(
+    (entry) =>
+      entry.mapPoint &&
+      typeof entry.mapPoint.x === "number" &&
+      Number.isFinite(entry.mapPoint.x) &&
+      typeof entry.mapPoint.y === "number" &&
+      Number.isFinite(entry.mapPoint.y),
+  );
+
+  if (!positionedEntries.length) {
+    return;
+  }
+
+  const xValues = positionedEntries.map((entry) => entry.mapPoint.x);
+  const yValues = positionedEntries.map((entry) => entry.mapPoint.y);
+  const minX = Math.min(...xValues);
+  const maxX = Math.max(...xValues);
+  const minY = Math.min(...yValues);
+  const maxY = Math.max(...yValues);
+  const spanX = Math.max(maxX - minX, 1);
+  const spanY = Math.max(maxY - minY, 1);
+  const padding = 0.12;
+
+  positionedEntries.forEach((entry) => {
+    const normalizedX = spanX === 1 && minX === maxX ? 0.5 : padding + ((entry.mapPoint.x - minX) / spanX) * (1 - padding * 2);
+    const normalizedY = spanY === 1 && minY === maxY ? 0.5 : padding + ((entry.mapPoint.y - minY) / spanY) * (1 - padding * 2);
+
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = `topic-map-marker ${getTopicStatusClass(entry.status)}`;
+    marker.style.left = `${Math.max(0.05, Math.min(0.95, normalizedX)) * 100}%`;
+    marker.style.top = `${(1 - Math.max(0.05, Math.min(0.95, normalizedY))) * 100}%`;
+    marker.dataset.action = "show-topic";
+    marker.dataset.topicId = entry.id;
+    marker.title = `${entry.title} (${entry.status})`;
+    elements.topicMapOverlay.appendChild(marker);
+  });
+
+  elements.topicMapOverlay.classList.remove("hidden");
+}
+
 async function updateTopicMapImage(floorId) {
   elements.topicMapImage.classList.add("hidden");
   elements.topicMapPlaceholder.classList.remove("hidden");
   elements.topicMapPlaceholder.innerHTML = "<p>Laddar 2D-karta fran StreamBIM...</p>";
+  clearTopicMapOverlay();
 
   try {
     await callApi("gotoFloor", floorId);
@@ -1104,8 +1225,11 @@ async function renderTopicMapFloor() {
   }
 
   const entries = state.topicMapEntries.filter((entry) => String(entry.floorId) === String(floor.id));
+  renderTopicMapLegend(entries);
+  renderTopicMapOverlay(entries);
   renderTopicMapList(entries, floor);
-  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}.`;
+  const positionedCount = entries.filter((entry) => entry.mapPoint).length;
+  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${positionedCount} arenden har kartmarkorer i 2D-vyn.`;
 }
 
 async function syncTopicMapToActiveFloor(floorId) {
@@ -1138,7 +1262,9 @@ async function loadTopicMapOverview() {
   elements.topicMapRoot.classList.remove("hidden");
   elements.topicMapStatus.textContent = "Laddar projektets arenden och plan...";
   elements.topicMapSummary.textContent = "";
+  elements.topicMapLegend.innerHTML = "";
   elements.topicMapList.innerHTML = "";
+  clearTopicMapOverlay();
 
   if (!state.projectId) {
     await loadProjectContext();
@@ -2219,6 +2345,16 @@ elements.topicFloorNext.addEventListener("click", async () => {
 });
 
 elements.topicMapList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action='show-topic']");
+  if (!button) {
+    return;
+  }
+
+  const entry = state.topicMapEntries.find((candidate) => candidate.id === String(button.dataset.topicId || ""));
+  await showTopicInModel(entry);
+});
+
+elements.topicMapOverlay.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action='show-topic']");
   if (!button) {
     return;
