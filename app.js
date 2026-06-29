@@ -66,9 +66,7 @@ const elements = {
   topicZoomOut: document.getElementById("topic-zoom-out"),
   topicZoomReset: document.getElementById("topic-zoom-reset"),
   topicZoomIn: document.getElementById("topic-zoom-in"),
-  topicMapLegend: document.getElementById("topic-map-legend"),
   topicMapImage: document.getElementById("topic-map-image"),
-  topicMapOverlay: document.getElementById("topic-map-overlay"),
   topicMapPlaceholder: document.getElementById("topic-map-placeholder"),
   topicMapSummary: document.getElementById("topic-map-summary"),
   topicMapList: document.getElementById("topic-map-list"),
@@ -1211,87 +1209,10 @@ function renderTopicMapList(entries, floor) {
   });
 }
 
-function renderTopicMapLegend(entries) {
-  const counts = entries.reduce(
-    (bucket, entry) => {
-      bucket[getTopicStatusKey(entry.status)] += 1;
-      return bucket;
-    },
-    { open: 0, done: 0, closed: 0, other: 0 },
-  );
-
-  const items = [
-    { key: "open", label: "Open", count: counts.open },
-    { key: "done", label: "Done", count: counts.done },
-    { key: "closed", label: "Closed", count: counts.closed },
-  ];
-  if (counts.other) {
-    items.push({ key: "other", label: "Ovriga", count: counts.other });
-  }
-
-  elements.topicMapLegend.innerHTML = items
-    .filter((item) => item.count > 0)
-    .map(
-      (item) =>
-        `<span class="topic-status-chip topic-status-${item.key}"><span class="topic-status-dot"></span>${item.label}: ${item.count}</span>`,
-    )
-    .join("");
-}
-
-function clearTopicMapOverlay() {
-  elements.topicMapOverlay.innerHTML = "";
-  elements.topicMapOverlay.classList.add("hidden");
-}
-
-function renderTopicMapOverlay(entries) {
-  clearTopicMapOverlay();
-
-  const positionedEntries = entries.filter(
-    (entry) =>
-      entry.mapPoint &&
-      typeof entry.mapPoint.x === "number" &&
-      Number.isFinite(entry.mapPoint.x) &&
-      typeof entry.mapPoint.y === "number" &&
-      Number.isFinite(entry.mapPoint.y),
-  );
-
-  if (!positionedEntries.length) {
-    return;
-  }
-
-  const xValues = positionedEntries.map((entry) => entry.mapPoint.x);
-  const yValues = positionedEntries.map((entry) => entry.mapPoint.y);
-  const minX = Math.min(...xValues);
-  const maxX = Math.max(...xValues);
-  const minY = Math.min(...yValues);
-  const maxY = Math.max(...yValues);
-  const spanX = Math.max(maxX - minX, 1);
-  const spanY = Math.max(maxY - minY, 1);
-  const padding = 0.12;
-
-  positionedEntries.forEach((entry) => {
-    const normalizedX = spanX === 1 && minX === maxX ? 0.5 : padding + ((entry.mapPoint.x - minX) / spanX) * (1 - padding * 2);
-    const normalizedY = spanY === 1 && minY === maxY ? 0.5 : padding + ((entry.mapPoint.y - minY) / spanY) * (1 - padding * 2);
-
-    const marker = document.createElement("button");
-    marker.type = "button";
-    marker.className = `topic-map-marker ${getTopicStatusClass(entry.status)}`;
-    marker.style.left = `${Math.max(0.05, Math.min(0.95, normalizedX)) * 100}%`;
-    marker.style.top = `${(1 - Math.max(0.05, Math.min(0.95, normalizedY))) * 100}%`;
-    marker.dataset.action = "show-topic";
-    marker.dataset.topicId = entry.id;
-    marker.title = `${entry.title} (${entry.status})`;
-    elements.topicMapOverlay.appendChild(marker);
-  });
-
-  elements.topicMapOverlay.classList.remove("hidden");
-}
-
 async function updateTopicMapImage(floorId) {
   elements.topicMapImage.classList.add("hidden");
   elements.topicMapPlaceholder.classList.remove("hidden");
   elements.topicMapPlaceholder.innerHTML = `<p>Laddar 2D-karta fran StreamBIM...</p><p class="helper-text">Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel</p>`;
-  clearTopicMapOverlay();
 
   try {
     await callApi("gotoFloor", floorId);
@@ -1363,11 +1284,11 @@ async function renderTopicMapFloor() {
   }
 
   let entries = [];
-  let usedMapMarkers = false;
+  let markerCount = 0;
   try {
     const markers = await loadTopicMapMarkers(floor.id);
     entries = mergeFloorEntriesFromMarkers(markers, floor);
-    usedMapMarkers = markers.length > 0;
+    markerCount = markers.length;
   } catch (error) {
     appendLog("map-markers fel", {
       floorId: floor.id,
@@ -1376,11 +1297,8 @@ async function renderTopicMapFloor() {
     entries = state.topicMapEntries.filter((entry) => String(entry.floorId) === String(floor.id));
   }
 
-  renderTopicMapLegend(entries);
-  renderTopicMapOverlay(entries);
   renderTopicMapList(entries, floor);
-  const positionedCount = entries.filter((entry) => entry.mapPoint).length;
-  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${positionedCount} arenden har kartmarkorer i 2D-vyn. Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel.${usedMapMarkers ? " Kalla: StreamBIM map-markers." : " Kalla: fallback via viewpoints."}`;
+  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. Widgeten skickade StreamBIMs map-markers-request for detta plan och fick ${markerCount} markorer i svar. Kartskala ${state.topicMapResolution.toFixed(2)} m/pixel.`;
 }
 
 async function syncTopicMapToActiveFloor(floorId) {
@@ -1413,9 +1331,7 @@ async function loadTopicMapOverview() {
   elements.topicMapRoot.classList.remove("hidden");
   elements.topicMapStatus.textContent = "Laddar projektets arenden och plan...";
   elements.topicMapSummary.textContent = "";
-  elements.topicMapLegend.innerHTML = "";
   elements.topicMapList.innerHTML = "";
-  clearTopicMapOverlay();
   state.topicMapMarkersByFloor = new Map();
 
   if (!state.projectId) {
@@ -2519,16 +2435,6 @@ elements.topicZoomIn.addEventListener("click", async () => {
 });
 
 elements.topicMapList.addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-action='show-topic']");
-  if (!button) {
-    return;
-  }
-
-  const entry = state.topicMapEntries.find((candidate) => candidate.id === String(button.dataset.topicId || ""));
-  await showTopicInModel(entry);
-});
-
-elements.topicMapOverlay.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action='show-topic']");
   if (!button) {
     return;
