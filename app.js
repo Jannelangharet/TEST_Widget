@@ -187,6 +187,19 @@ function setSelectionState(message, active) {
   elements.selectedGuid.textContent = state.selectedGuid || "-";
 }
 
+function normalizeScalar(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const stringValue = String(value).trim();
+  if (!stringValue || stringValue === "-") {
+    return "";
+  }
+
+  return stringValue;
+}
+
 function formatValue(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -340,14 +353,26 @@ async function loadProjectContext() {
       callApi("getUserEmail"),
     ]);
 
-    state.projectId = formatValue(projectId);
-    state.buildingId = formatValue(buildingId);
-    state.userEmail = formatValue(userEmail);
+    state.projectId = normalizeScalar(projectId);
+    state.buildingId = normalizeScalar(buildingId);
+    state.userEmail = normalizeScalar(userEmail);
     elements.projectId.textContent = formatValue(projectId);
     elements.buildingId.textContent = formatValue(buildingId);
     elements.userEmail.textContent = formatValue(userEmail);
   } catch (error) {
     showError(`Kunde inte lasa projektinfo: ${error.message || error}`);
+  }
+}
+
+async function ensureProjectContext() {
+  if (state.projectId && state.buildingId) {
+    return;
+  }
+
+  await loadProjectContext();
+
+  if (!state.projectId) {
+    throw new Error("ProjectId ar inte tillgangligt an fran StreamBIM.");
   }
 }
 
@@ -372,6 +397,10 @@ function toAbsoluteViewerUrl(url) {
 }
 
 function buildProjectApiUrl(pathWithQuery) {
+  if (!state.projectId) {
+    throw new Error("ProjectId saknas for projekt-API-anropet.");
+  }
+
   return toAbsoluteViewerUrl(`/project-${encodeURIComponent(state.projectId)}/api/v1/v2${pathWithQuery}`);
 }
 
@@ -776,9 +805,7 @@ function delay(milliseconds) {
 }
 
 async function loadWorkflows() {
-  if (!state.projectId) {
-    await loadProjectContext();
-  }
+  await ensureProjectContext();
 
   const payload = await fetchJsonViaViewer(`/project-${state.projectId}/api/v1/v2/workflows`);
   state.workflows = new Map(
@@ -1352,9 +1379,7 @@ async function syncCurrentSpaceTopics() {
     elements.spaceTopicsStatus.textContent = "Laddar projektets arenden for att matcha aktuellt space...";
     elements.spaceTopicsSummary.textContent = "";
     elements.spaceTopicsList.innerHTML = "";
-    if (!state.projectId) {
-      await loadProjectContext();
-    }
+    await ensureProjectContext();
     if (!state.workflows.size) {
       await loadWorkflows();
     }
@@ -1540,7 +1565,8 @@ async function fetchCurrentSpacesByCamera(cameraState) {
 }
 
 async function fetchSpaceCatalog() {
-  if (!state.projectId || !state.buildingId) {
+  await ensureProjectContext();
+  if (!state.buildingId) {
     return [];
   }
 
@@ -1620,9 +1646,7 @@ async function refreshCurrentSpaces() {
     throw new Error("Widgeten ar inte ansluten till StreamBIM.");
   }
 
-  if (!state.projectId || !state.buildingId) {
-    await loadProjectContext();
-  }
+  await ensureProjectContext();
 
   let spaces = [];
 
@@ -1655,6 +1679,7 @@ async function handleSpacesChanged(guids) {
 }
 
 async function fetchTopicFilters() {
+  await ensureProjectContext();
   const payload = await fetchJsonViaViewer(`/project-${state.projectId}/api/v1/v2/topic-filters?page[limit]=200&page[skip]=0`);
   return payload.data || [];
 }
@@ -1710,9 +1735,7 @@ async function createSpaceTopicFilter(spaceRecord) {
 
 async function syncSpaceTopicFilters() {
   const currentSpaces = state.currentSpaceRecords.filter((spaceRecord) => spaceRecord?.id);
-  if (!state.projectId) {
-    await loadProjectContext();
-  }
+  await ensureProjectContext();
 
   await clearWidgetSpaceTopicFilters();
   for (const spaceRecord of currentSpaces) {
