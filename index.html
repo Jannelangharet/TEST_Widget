@@ -97,6 +97,42 @@
 
       <section class="panel">
         <div class="panel-heading">
+          <h2>2D Arendekarta</h2>
+          <div class="button-row">
+            <button id="load-topic-map" class="ghost-button" type="button" disabled>Ladda arenden</button>
+          </div>
+        </div>
+        <div id="topic-map-empty" class="empty-state">
+          <p>2D-kartan laddar projektets arenden och uppskattar vilket plan de hor till.</p>
+          <p class="helper-text">Du kan byta plan, se en 2D-karta fran StreamBIM och klicka pa ett arende for att visa det i modellen.</p>
+        </div>
+        <div id="topic-map-status" class="helper-text"></div>
+        <div id="topic-map-root" class="topic-map-root hidden">
+          <div class="topic-map-toolbar">
+            <button id="topic-floor-prev" class="ghost-button" type="button" disabled>Forra plan</button>
+            <label class="topic-floor-picker">
+              <span>Plan</span>
+              <select id="topic-floor-select" disabled></select>
+            </label>
+            <button id="topic-floor-next" class="ghost-button" type="button" disabled>Nasta plan</button>
+          </div>
+          <div class="topic-map-layout">
+            <div class="topic-map-stage">
+              <img id="topic-map-image" class="topic-map-image hidden" alt="2D karta for valt plan" />
+              <div id="topic-map-placeholder" class="empty-state">
+                <p>Ingen 2D-karta laddad annu.</p>
+              </div>
+            </div>
+            <div class="topic-map-sidebar">
+              <div id="topic-map-summary" class="helper-text"></div>
+              <div id="topic-map-list" class="topic-map-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
           <h2>Debug</h2>
           <button id="clear-log" class="ghost-button" type="button">Rensa logg</button>
         </div>

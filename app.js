@@ -7,6 +7,10 @@ const state = {
   userEmail: "",
   workflows: new Map(),
   signatureEntries: [],
+  topicMapEntries: [],
+  topicMapFloors: [],
+  topicMapFloorId: "",
+  topicMapImage: "",
 };
 
 const STREAMBIM_SCRIPT_CANDIDATES = [
@@ -48,6 +52,17 @@ const elements = {
   checklistEmpty: document.getElementById("checklist-empty"),
   checklistStatus: document.getElementById("checklist-status"),
   checklistRoot: document.getElementById("checklist-root"),
+  loadTopicMap: document.getElementById("load-topic-map"),
+  topicMapEmpty: document.getElementById("topic-map-empty"),
+  topicMapStatus: document.getElementById("topic-map-status"),
+  topicMapRoot: document.getElementById("topic-map-root"),
+  topicFloorPrev: document.getElementById("topic-floor-prev"),
+  topicFloorSelect: document.getElementById("topic-floor-select"),
+  topicFloorNext: document.getElementById("topic-floor-next"),
+  topicMapImage: document.getElementById("topic-map-image"),
+  topicMapPlaceholder: document.getElementById("topic-map-placeholder"),
+  topicMapSummary: document.getElementById("topic-map-summary"),
+  topicMapList: document.getElementById("topic-map-list"),
   clearLog: document.getElementById("clear-log"),
   debugLog: document.getElementById("debug-log"),
 };
@@ -140,6 +155,7 @@ function setConnectionState(connected, message) {
   elements.connectionBadge.textContent = message;
   elements.connectionBadge.className = connected ? "badge badge-live" : "badge badge-waiting";
   elements.loadChecklists.disabled = !connected;
+  elements.loadTopicMap.disabled = !connected;
 }
 
 function setSelectionState(message, active) {
@@ -654,6 +670,19 @@ function formatDate(value) {
   }).format(date);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 async function loadWorkflows() {
   if (!state.projectId) {
     await loadProjectContext();
@@ -788,6 +817,326 @@ async function loadAllTopics() {
   }
 
   return topics;
+}
+
+function getTopicTitle(topic) {
+  const attrs = topic?.attributes || {};
+  return attrs.title || attrs["teaser-text"] || `Arende ${topic.id}`;
+}
+
+function getTopicPublicId(topic) {
+  return topic?.attributes?.["public-id"] || topic?.id || "-";
+}
+
+function getTopicStatusLabel(topic) {
+  const statusId = String(topic?.relationships?.status?.data?.id || "");
+  if (statusId === CHECKLIST_STATUS_IDS.open) {
+    return "Open";
+  }
+  if (statusId === CHECKLIST_STATUS_IDS.done) {
+    return "Done";
+  }
+  if (statusId === CHECKLIST_STATUS_IDS.closed) {
+    return "Closed";
+  }
+  if (statusId === CHECKLIST_STATUS_IDS.notRelevant) {
+    return "Ej relevant";
+  }
+  return statusId || "Okand status";
+}
+
+function getTopicWorkflowLabel(topic) {
+  const workflowId = topic?.relationships?.workflow?.data?.id || "";
+  return state.workflows.get(workflowId) || workflowId || "Okant workflow";
+}
+
+function getViewpointSelectionGuid(viewpoint) {
+  const selection = viewpoint?.attributes?.["extra-data"]?.selection;
+  if (!Array.isArray(selection)) {
+    return "";
+  }
+
+  for (const item of selection) {
+    const guid = item?.ifc_guid || item?.guid || item?.ifcGuid || item?.objectGuid || "";
+    if (guid) {
+      return guid;
+    }
+  }
+
+  return "";
+}
+
+function getViewpointCameraState(viewpoint) {
+  return viewpoint?.attributes?.["camera-state"] || null;
+}
+
+function getViewpointCameraY(viewpoint) {
+  const position = getViewpointCameraState(viewpoint)?.position;
+  return Array.isArray(position) && typeof position[1] === "number" ? position[1] : null;
+}
+
+function sortFloors(floors) {
+  return [...floors].sort((left, right) => {
+    const leftHeight = Number(left?.height ?? 0);
+    const rightHeight = Number(right?.height ?? 0);
+    return leftHeight - rightHeight;
+  });
+}
+
+function findClosestFloorId(cameraY, floors) {
+  if (typeof cameraY !== "number" || !Number.isFinite(cameraY) || !floors.length) {
+    return "";
+  }
+
+  const candidates = [cameraY, -cameraY];
+  let bestFloorId = "";
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidateY of candidates) {
+    for (const floor of floors) {
+      const floorHeight = Number(floor?.height);
+      if (!Number.isFinite(floorHeight)) {
+        continue;
+      }
+
+      const distance = Math.abs(floorHeight - candidateY);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestFloorId = String(floor.id);
+      }
+    }
+  }
+
+  return bestFloorId;
+}
+
+async function loadTopicViewpoints(topicId) {
+  const payload = await fetchJsonViaViewer(
+    `/project-${state.projectId}/api/v1/v2/topic-viewpoints?page[limit]=20&page[skip]=0&filter[topic]=${encodeURIComponent(topicId)}`,
+  );
+  return payload.data || [];
+}
+
+async function loadTopicMapEntries(floors) {
+  const topics = await loadAllTopics();
+  const relevantTopics = topics.filter((topic) => {
+    const attrs = topic?.attributes || {};
+    return !attrs["is-deleted"] && !attrs["is-draft"] && !isChecklistTopic(topic);
+  });
+
+  const entries = [];
+  const batchSize = 8;
+
+  for (let index = 0; index < relevantTopics.length; index += batchSize) {
+    const batch = relevantTopics.slice(index, index + batchSize);
+    const withViewpoints = await Promise.all(
+      batch.map(async (topic) => {
+        try {
+          const viewpoints = await loadTopicViewpoints(topic.id);
+          return { topic, viewpoints };
+        } catch (error) {
+          appendLog("topic-viewpoints fel", {
+            topicId: topic.id,
+            error: error.message || String(error),
+          });
+          return { topic, viewpoints: [] };
+        }
+      }),
+    );
+
+    withViewpoints.forEach(({ topic, viewpoints }) => {
+      const viewpoint = viewpoints[0] || null;
+      const cameraState = getViewpointCameraState(viewpoint);
+      const cameraY = getViewpointCameraY(viewpoint);
+      const objectGuid = readTopicObjectGuid(topic) || getViewpointSelectionGuid(viewpoint);
+      const floorId = findClosestFloorId(cameraY, floors);
+
+      entries.push({
+        id: String(topic.id),
+        publicId: getTopicPublicId(topic),
+        title: getTopicTitle(topic),
+        createdAt: topic?.attributes?.["creation-date"] || "",
+        createdLabel: formatDate(topic?.attributes?.["creation-date"] || ""),
+        status: getTopicStatusLabel(topic),
+        workflow: getTopicWorkflowLabel(topic),
+        objectGuid,
+        floorId,
+        cameraY,
+        cameraState,
+        url: buildTopicDetailUrl(topic.id),
+      });
+    });
+
+    appendLog("arenden bearbetade", {
+      processed: Math.min(index + batch.length, relevantTopics.length),
+      total: relevantTopics.length,
+    });
+  }
+
+  return entries.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+}
+
+function updateTopicFloorButtons() {
+  const floors = state.topicMapFloors;
+  const currentIndex = floors.findIndex((floor) => String(floor.id) === String(state.topicMapFloorId));
+  const hasSelection = currentIndex !== -1;
+
+  elements.topicFloorSelect.disabled = !floors.length;
+  elements.topicFloorPrev.disabled = !hasSelection || currentIndex <= 0;
+  elements.topicFloorNext.disabled = !hasSelection || currentIndex >= floors.length - 1;
+}
+
+function populateTopicFloorSelect() {
+  const floors = state.topicMapFloors;
+  elements.topicFloorSelect.innerHTML = "";
+
+  floors.forEach((floor) => {
+    const option = document.createElement("option");
+    option.value = String(floor.id);
+    option.textContent = `${floor.name || `Plan ${floor.id}`} (${Number(floor.height ?? 0).toFixed(2)} m)`;
+    elements.topicFloorSelect.appendChild(option);
+  });
+
+  if (state.topicMapFloorId) {
+    elements.topicFloorSelect.value = String(state.topicMapFloorId);
+  }
+
+  updateTopicFloorButtons();
+}
+
+function renderTopicMapList(entries, floor) {
+  elements.topicMapList.innerHTML = "";
+  const unmatched = state.topicMapEntries.filter((entry) => !entry.floorId).length;
+  elements.topicMapSummary.textContent = `${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}. ${state.topicMapEntries.length} arenden totalt i projektet.${unmatched ? ` ${unmatched} arenden kunde inte kopplas till ett plan.` : ""}`;
+
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "<p>Inga arenden hittades pa detta plan.</p>";
+    elements.topicMapList.appendChild(empty);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const card = document.createElement("article");
+    card.className = "topic-card";
+    card.innerHTML = `
+      <h3>${escapeHtml(entry.title)}</h3>
+      <p>Arende ${escapeHtml(entry.publicId)} | ${escapeHtml(entry.status)}</p>
+      <p>${escapeHtml(entry.workflow)} | Skapad ${escapeHtml(entry.createdLabel)}</p>
+      <div class="topic-card-actions">
+        <button type="button" data-action="show-topic" data-topic-id="${escapeHtml(entry.id)}">Visa i modellen</button>
+        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noreferrer">Oppna arende</a>
+      </div>
+    `;
+    elements.topicMapList.appendChild(card);
+  });
+}
+
+async function updateTopicMapImage(floorId) {
+  elements.topicMapImage.classList.add("hidden");
+  elements.topicMapPlaceholder.classList.remove("hidden");
+  elements.topicMapPlaceholder.innerHTML = "<p>Laddar 2D-karta fran StreamBIM...</p>";
+
+  try {
+    await callApi("gotoFloor", floorId);
+  } catch (error) {
+    appendLog("gotoFloor fel", {
+      floorId,
+      error: error.message || String(error),
+    });
+  }
+
+  await delay(150);
+  const image = await callApi("getMapImage", { width: 1600, height: 1200, resolution: 0.05 });
+  state.topicMapImage = image;
+  elements.topicMapImage.src = image;
+  elements.topicMapImage.classList.remove("hidden");
+  elements.topicMapPlaceholder.classList.add("hidden");
+}
+
+async function showTopicInModel(entry) {
+  if (!entry) {
+    return;
+  }
+
+  try {
+    if (entry.floorId) {
+      await callApi("gotoFloor", entry.floorId);
+      state.topicMapFloorId = String(entry.floorId);
+      elements.topicFloorSelect.value = String(entry.floorId);
+      updateTopicFloorButtons();
+    }
+
+    if (entry.cameraState) {
+      await callApi("setCameraState", entry.cameraState);
+    } else if (entry.objectGuid) {
+      await callApi("gotoObject", entry.objectGuid);
+    }
+
+    if (entry.objectGuid) {
+      state.selectedGuid = entry.objectGuid;
+      setSelectionState(`Valt objekt: ${entry.objectGuid}`, true);
+    }
+
+    elements.actionFeedback.textContent = `Visar arende ${entry.publicId} i modellen.`;
+  } catch (error) {
+    showError(`Kunde inte visa arendet i modellen: ${error.message || error}`);
+  }
+}
+
+async function renderTopicMapFloor() {
+  const floor = state.topicMapFloors.find((candidate) => String(candidate.id) === String(state.topicMapFloorId));
+  if (!floor) {
+    elements.topicMapStatus.textContent = "Det finns inget valt plan att visa.";
+    return;
+  }
+
+  updateTopicFloorButtons();
+  elements.topicMapStatus.textContent = `Laddar 2D-karta och arenden for ${floor.name || `plan ${floor.id}`}...`;
+
+  try {
+    await updateTopicMapImage(floor.id);
+  } catch (error) {
+    elements.topicMapImage.classList.add("hidden");
+    elements.topicMapPlaceholder.classList.remove("hidden");
+    elements.topicMapPlaceholder.innerHTML = `<p>Kunde inte ladda 2D-kartan for detta plan.</p><p class="helper-text">${escapeHtml(error.message || String(error))}</p>`;
+  }
+
+  const entries = state.topicMapEntries.filter((entry) => String(entry.floorId) === String(floor.id));
+  renderTopicMapList(entries, floor);
+  elements.topicMapStatus.textContent = `Visar ${entries.length} arenden pa ${floor.name || `plan ${floor.id}`}.`;
+}
+
+async function loadTopicMapOverview() {
+  elements.topicMapEmpty.classList.add("hidden");
+  elements.topicMapRoot.classList.remove("hidden");
+  elements.topicMapStatus.textContent = "Laddar projektets arenden och plan...";
+  elements.topicMapSummary.textContent = "";
+  elements.topicMapList.innerHTML = "";
+
+  if (!state.projectId) {
+    await loadProjectContext();
+  }
+  if (!state.workflows.size) {
+    await loadWorkflows();
+  }
+
+  const floors = sortFloors(await callApi("getFloors"));
+  state.topicMapFloors = floors;
+  if (!floors.length) {
+    throw new Error("Projektet returnerade inga plan via getFloors().");
+  }
+
+  state.topicMapEntries = await loadTopicMapEntries(floors);
+
+  const firstUsefulFloor =
+    floors.find((floor) => state.topicMapEntries.some((entry) => String(entry.floorId) === String(floor.id))) ||
+    floors[0];
+
+  state.topicMapFloorId = String(firstUsefulFloor.id);
+  populateTopicFloorSelect();
+  await renderTopicMapFloor();
 }
 
 function buildSignatureEntry(topic, comments) {
@@ -1630,6 +1979,16 @@ async function initializeProjectData() {
   } catch (error) {
     appendLog("Signaturoversikt", `Autoladdning misslyckades: ${error.message || error}`);
   }
+
+  try {
+    await loadTopicMapOverview();
+  } catch (error) {
+    appendLog("2D arendekarta", `Autoladdning misslyckades: ${error.message || error}`);
+    elements.topicMapEmpty.classList.remove("hidden");
+    elements.topicMapRoot.classList.add("hidden");
+    elements.topicMapStatus.textContent =
+      "2D-kartan kunde inte laddas automatiskt. Se debug-loggen och prova igen med knappen.";
+  }
 }
 
 async function handlePickedObject(result) {
@@ -1766,6 +2125,52 @@ elements.loadChecklists.addEventListener("click", async () => {
 elements.exportPdf.addEventListener("click", () => {
   appendLog("Manuell handling", "Skapa PDF-rapport");
   openPdfReport();
+});
+
+elements.loadTopicMap.addEventListener("click", async () => {
+  appendLog("Manuell handling", "Ladda 2D arendekarta");
+  try {
+    await loadTopicMapOverview();
+  } catch (error) {
+    showError(`Kunde inte ladda 2D arendekartan: ${error.message || error}`);
+  }
+});
+
+elements.topicFloorSelect.addEventListener("change", async (event) => {
+  state.topicMapFloorId = String(event.target.value || "");
+  await renderTopicMapFloor();
+});
+
+elements.topicFloorPrev.addEventListener("click", async () => {
+  const currentIndex = state.topicMapFloors.findIndex((floor) => String(floor.id) === String(state.topicMapFloorId));
+  if (currentIndex <= 0) {
+    return;
+  }
+
+  state.topicMapFloorId = String(state.topicMapFloors[currentIndex - 1].id);
+  elements.topicFloorSelect.value = state.topicMapFloorId;
+  await renderTopicMapFloor();
+});
+
+elements.topicFloorNext.addEventListener("click", async () => {
+  const currentIndex = state.topicMapFloors.findIndex((floor) => String(floor.id) === String(state.topicMapFloorId));
+  if (currentIndex === -1 || currentIndex >= state.topicMapFloors.length - 1) {
+    return;
+  }
+
+  state.topicMapFloorId = String(state.topicMapFloors[currentIndex + 1].id);
+  elements.topicFloorSelect.value = state.topicMapFloorId;
+  await renderTopicMapFloor();
+});
+
+elements.topicMapList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action='show-topic']");
+  if (!button) {
+    return;
+  }
+
+  const entry = state.topicMapEntries.find((candidate) => candidate.id === String(button.dataset.topicId || ""));
+  await showTopicInModel(entry);
 });
 
 elements.clearLog.addEventListener("click", () => {
